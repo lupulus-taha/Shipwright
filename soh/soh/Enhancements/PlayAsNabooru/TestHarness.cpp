@@ -17,10 +17,12 @@
 //   health N                  set health in 1/16 hearts
 //   yaw DEG                   turn the player to face DEG (0 = +Z)
 //   pos X Y Z                 teleport the player
+//   save | restore            remember the player's position and facing | go back there
 //   rise DY                   move the player up by DY (she falls back down)
 //   cvar NAME VALUE           set an integer CVar (not saved)
 //   warp HEX                  go to entrance HEX (follow with waitplay)
-//   pose NAME FRAME           show frame FRAME of gPlayAsNabooru<NAME>Anim instead of mirroring Link; "pose off"
+//   pose NAME FRAME [SWORDS SFRAME]  show frame FRAME of gPlayAsNabooru<NAME>Anim instead of mirroring Link,
+//                             optionally with the scimitars of <SWORDS> frame SFRAME; "pose off"
 //   done                      write <out>/done and exit the game
 
 #include <libultraship/bridge/consolevariablebridge.h>
@@ -46,11 +48,11 @@ extern GameState* gGameState;
 }
 
 void PlayAsNabooru_DebugState(const char** move, float* frame);
-void PlayAsNabooru_DebugForce(const char* name, float frame);
+void PlayAsNabooru_DebugForce(const char* name, float frame, const char* swords, float swordsFrame);
 
 namespace {
 
-enum class Kind { WaitPlay, Hold, Shot, Log, Mark, Hit, Health, Yaw, Pos, CVar, Pose, Warp, Rise, Done };
+enum class Kind { WaitPlay, Hold, Shot, Log, Mark, Hit, Health, Yaw, Pos, CVar, Pose, Warp, Rise, Save, Restore, Done };
 
 struct Step {
     Kind kind;
@@ -60,6 +62,7 @@ struct Step {
     s8 stickX = 0;
     s8 stickY = 0;
     std::string text;
+    std::string swords;
     float values[3] = { 0, 0, 0 };
 };
 
@@ -76,6 +79,8 @@ u16 sPrevButtons = 0;
 s8 sPrevStickX = 0;
 s8 sPrevStickY = 0;
 Vec3f sLastPos;
+Vec3f sSavedPos;
+s16 sSavedYaw = 0;
 
 u16 ButtonBit(const std::string& name) {
     static const std::pair<const char*, u16> kButtons[] = {
@@ -141,6 +146,8 @@ void LoadScript(const char* path) {
         } else if (cmd == "hit" || cmd == "health" || cmd == "yaw") {
             step.kind = (cmd == "hit") ? Kind::Hit : (cmd == "health") ? Kind::Health : Kind::Yaw;
             in >> step.values[0];
+        } else if (cmd == "save" || cmd == "restore") {
+            step.kind = (cmd == "save") ? Kind::Save : Kind::Restore;
         } else if (cmd == "rise") {
             step.kind = Kind::Rise;
             in >> step.values[0];
@@ -157,7 +164,8 @@ void LoadScript(const char* path) {
             step.values[0] = (float)entrance;
         } else if (cmd == "pose") {
             step.kind = Kind::Pose;
-            in >> step.text >> step.values[0];
+            step.values[1] = -1.0f;
+            in >> step.text >> step.values[0] >> step.swords >> step.values[1];
             if (step.text == "off") {
                 step.text.clear();
             }
@@ -303,6 +311,19 @@ void OnFrameStart() {
                     player->actor.prevPos = player->actor.home.pos = player->actor.world.pos;
                 }
                 break;
+            case Kind::Save:
+                if (player) {
+                    sSavedPos = player->actor.world.pos;
+                    sSavedYaw = player->actor.shape.rot.y;
+                }
+                break;
+            case Kind::Restore:
+                if (player) {
+                    player->actor.world.pos = player->actor.prevPos = sSavedPos;
+                    player->actor.shape.rot.y = player->actor.world.rot.y = player->yaw = sSavedYaw;
+                    player->actor.speedXZ = 0.0f;
+                }
+                break;
             case Kind::Rise:
                 if (player) {
                     player->actor.world.pos.y += step.values[0];
@@ -320,7 +341,7 @@ void OnFrameStart() {
                 }
                 break;
             case Kind::Pose:
-                PlayAsNabooru_DebugForce(step.text.c_str(), step.values[0]);
+                PlayAsNabooru_DebugForce(step.text.c_str(), step.values[0], step.swords.c_str(), step.values[1]);
                 break;
             case Kind::Done:
                 std::ofstream(sOutDir + "/done") << sFrame;

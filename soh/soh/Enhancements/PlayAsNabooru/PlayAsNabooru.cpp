@@ -62,7 +62,9 @@ struct Move {
     f32 start = 0.0f;
     f32 end = -1.0f; // -1: last frame
     f32 speed = 1.0f;
-    f32 lift = 0.0f; // extra height (model units) at the middle of the move, for leaps
+    f32 lift = 0.0f;         // extra height (model units) at the middle of the move, for leaps
+    f32 span = 1.0f;         // Sync: the fraction of Link's animation that start..end covers
+    f32 swordsFrame = -1.0f; // >= 0: hold this frame of `swords` instead of following the body's frame
 };
 
 // The jump attack leaps higher than the fighter's flip (model units, her model is drawn at 1/100 scale).
@@ -74,17 +76,29 @@ constexpr f32 kJumpSlashLift = 2000.0f;
 
 // locomotion and idles
 const Move kHips = { "Hips", gNabooruStandingHandsOnHipsAnim, nullptr, Mode::Loop };
-const Move kIdle = { "Idle", GEN(Relaxed), nullptr, Mode::Loop };                     // empty-handed
-const Move kIdleSwords = { "IdleSwords", GEN(Stand), GEN_SWORDS(Stand), Mode::Loop }; // scimitars held low
-const Move kTired = { "Tired", GEN(Tired), GEN_SWORDS(Stand), Mode::Loop };
+const Move kIdle = { "Idle", GEN(Relaxed), nullptr, Mode::Loop }; // empty-handed
+// with scimitars: her relaxed stance, blades hanging along her legs
+#define IDLE_SWORDS GEN_SWORDS(Resting)
+constexpr f32 kIdleSwordsFrame = 0.0f;
+const Move kIdleSwords = { .name = "IdleSwords",
+                           .anim = GEN(Relaxed),
+                           .swords = IDLE_SWORDS,
+                           .mode = Mode::Loop,
+                           .swordsFrame = kIdleSwordsFrame };
+const Move kTired = { "Tired", GEN(Tired), nullptr, Mode::Loop };
+const Move kTiredSwords = { .name = "TiredSwords",
+                            .anim = GEN(Tired),
+                            .swords = IDLE_SWORDS,
+                            .mode = Mode::Loop,
+                            .swordsFrame = kIdleSwordsFrame };
 const Move kWalk = { "Walk", gNabooruWalkingAnim, nullptr, Mode::Loop };
 const Move kRun = { "Run", GEN(Run), nullptr, Mode::Loop };
 const Move kStance = { "Stance", GEN(Neutral), GEN_SWORDS(Neutral), Mode::Loop };
 const Move kFightWalk = { "FightWalk", GEN(FightWalk), GEN_SWORDS(FightWalk), Mode::Loop };
 const Move kStrafe = { "Strafe", GEN(Sidestep), GEN_SWORDS(Sidestep), Mode::Loop };
-// shield (the fighter's crossed-scimitar guard is the first frame of her block)
-const Move kBlock = { "Block", GEN(Block), GEN_SWORDS(Block), Mode::Pose, 0 };
-const Move kBlockEnd = { "BlockEnd", GEN(Block), GEN_SWORDS(Block), Mode::Once, 0, -1, 0.75f };
+const Move kStrafeMirror = { "StrafeMirror", GEN(SidestepMirror), GEN_SWORDS(SidestepMirror), Mode::Loop };
+// shield: the fighter's crossed-scimitar block, standing upright
+const Move kBlock = { "Block", GEN(Guard), GEN_SWORDS(Guard), Mode::Pose, 0 };
 const Move kKneel = { "Kneel", GEN(Crouching), nullptr, Mode::Loop };
 // attacks: Link's slash animation is the swing, his "_end" animation the recovery
 const Move kSlash = { "Slash", GEN(Slash), GEN_SWORDS(Slash), Mode::Sync, 0, 6 };
@@ -96,17 +110,26 @@ const Move kSpinCharge = { "SpinCharge", GEN(SpinAttack), GEN_SWORDS(SpinAttack)
 const Move kSpin = { "Spin", GEN(SpinAttack), GEN_SWORDS(SpinAttack), Mode::Sync, 12, 22 };
 const Move kSpinEnd = { "SpinEnd", GEN(SpinAttack), GEN_SWORDS(SpinAttack), Mode::Sync, 22, 33 };
 const Move kJumpSlashAir = { "JumpSlashAir", GEN(Flip), GEN_SWORDS(Flip), Mode::Sync, 9, 0, 1.0f, kJumpSlashLift };
-// the landing strike is quick (Link's sword hits as he lands), the recovery slow
+// the landing strike is quick (Link's sword hits as he lands), then she rises out of the landing crouch
 const Move kJumpSlashHit = { "JumpSlashHit", GEN(Slash), GEN_SWORDS(Slash), Mode::Once, 2, 6, 1.0f };
-const Move kJumpSlashEnd = { "JumpSlashEnd", GEN(Slash), GEN_SWORDS(Slash), Mode::Once, 6, 9, 0.4f };
-// acrobatics
-const Move kBackflip = { "Backflip", GEN(Flip), GEN_SWORDS(Flip), Mode::Sync, 0, 8 };
-const Move kBackflipEnd = { "BackflipEnd", GEN(Flip), GEN_SWORDS(Flip), Mode::Sync, 8, 10 };
-// jumping and falling: the fighter's drop-from-the-ceiling animation starts in the air, then lands
-const Move kAirborne = { "Airborne", GEN(Jump), GEN_SWORDS(Jump), Mode::Pose, 0 };
+const Move kJumpSlashEnd = { "JumpSlashEnd", GEN(Jump), GEN_SWORDS(Jump), Mode::Sync, 6, 16 };
+// acrobatics: Link lands his backflip about 70% into its animation
+const Move kBackflip = { .name = "Backflip",
+                         .anim = GEN(Flip),
+                         .swords = GEN_SWORDS(Flip),
+                         .mode = Mode::Sync,
+                         .start = 0,
+                         .end = 9,
+                         .span = 0.7f };
+const Move kBackflipEnd = { "BackflipEnd", GEN(Flip), GEN_SWORDS(Flip), Mode::Sync, 9, 10 };
+// jumping and falling (landings are the end of the fighter's drop-from-the-ceiling animation)
+// in the air: the flight phase of her run
+const Move kAirborne = { "Airborne", GEN(Run), nullptr, Mode::Pose, 3 };
 const Move kLand = { "Land", GEN(Jump), GEN_SWORDS(Jump), Mode::Sync, 1, 16 };
 const Move kLandShort = { "LandShort", GEN(Jump), GEN_SWORDS(Jump), Mode::Sync, 5, 16 };
-const Move kHopUp = { "HopUp", GEN(Jump), GEN_SWORDS(Jump), Mode::Sync, 3, 16 };
+// touching down while moving on: a quick dip, then her walk/run takes over
+const Move kLandQuick = { "LandQuick", GEN(Jump), GEN_SWORDS(Jump), Mode::Once, 4, 14, 2.0f };
+constexpr s32 kLandQuickFrames = 5;
 // getting hurt
 const Move kDamage = {
     "Damage", GEN(Damage), GEN_SWORDS(Damage), Mode::Sync, 0, 7
@@ -116,7 +139,7 @@ const Move kDown = { "Down", GEN(Defeat), GEN_SWORDS(Defeat), Mode::Sync, 12, 22
 const Move kGetUp = { "GetUp", GEN(Crouch), nullptr, Mode::Once, 10, 0, 0.6f };
 const Move kDeath = { "Death", GEN(Faint), nullptr, Mode::Once, 0, -1, 1.0f };
 // how she holds the scimitars when the current animation has no sword data (e.g. running with swords drawn)
-const char* const kDefaultSwords = GEN_SWORDS(Stand);
+const char* const kDefaultSwords = GEN_SWORDS(Resting);
 
 // Rules are checked in order against Link's animation name (after "gPlayerAnim_link_"); the first rule with a
 // matching substring wins. A null move means "Link-only, not implemented": use the locomotion fallback.
@@ -152,13 +175,13 @@ const std::vector<Rule> kRules = {
     { { "_downB", "hip_down" }, &kDown },
     { { "_downA", "ice_down" }, &kKnockdown },
     { { "_hit", "_shit", "damage" }, &kDamage },
-    { { "250jump" }, &kHopUp },
+    { { "250jump" }, &kAirborne }, // jumping up to grab a ledge
     // Link's "landing" animations are his fall; "short_landing" is the touchdown
     { { "short_landing" }, &kLand },
     { { "run_jump_end", "front_jump_end", "anchor_landing" }, &kLandShort },
     { { "landing", "normal_jump", "run_jump", "front_jump" }, &kAirborne },
     { { "talk" }, &kHips },
-    { { "wait_heat", "waitF_heat" }, &kTired },
+    { { "wait_heat", "waitF_heat" }, &kTired }, // armed version picked in UpdateBody
 };
 
 const char* LinkAnimName(const void* anim) {
@@ -228,7 +251,7 @@ struct Layer {
     bool ready = false;
 };
 
-enum class Mask { Upper, Legs };
+enum class Mask { Upper, Arms, Legs };
 
 Layer sBody;    // whole body
 Layer sOverlay; // drives part of the body (sMask), faded in/out by sOverlayWeight
@@ -238,8 +261,13 @@ Vec3s sFinalJoints[NB_LIMB_MAX];
 
 bool sShowSwords = false;
 Vec3f sPrevPos;
+const void* sLinkPrevAnim = nullptr; // Link's animation can stall while he moves (see Nabooru_OnPlayerUpdate)
+f32 sLinkPrevFrame = 0.0f;
+s32 sLinkStalledFrames = 0;
+s32 sLandingFrames = 0;  // remaining frames of a quick landing
 std::string sForcedName; // test harness: show one animation frame instead of mirroring Link
 f32 sForcedFrame = 0.0f;
+f32 sForcedSwordsFrame = -1.0f;
 Move sForced;
 std::string sForcedAnim, sForcedSwords;
 
@@ -250,6 +278,9 @@ const char* sEyeTextures[] = { gNabooruEyeOpenTex, gNabooruEyeHalfTex, gNabooruE
 bool InMask(Mask mask, s32 joint) {
     if (mask == Mask::Upper) {
         return joint >= NB_LIMB_TORSO && joint <= NB_LIMB_PONYTAIL;
+    }
+    if (mask == Mask::Arms) {
+        return joint >= NB_LIMB_L_UPPER_ARM && joint <= NB_LIMB_R_HAND;
     }
     return (joint >= NB_LIMB_L_THIGH && joint <= NB_LIMB_R_FOOT) || joint == NB_LIMB_WAIST;
 }
@@ -308,6 +339,11 @@ f32 LinkAnimProgress(Player* player) {
     return (end > 0.0f) ? CLAMP(link->curFrame / end, 0.0f, 1.0f) : 0.0f;
 }
 
+// progress through a Sync move: it covers the first `span` of Link's animation
+f32 MoveProgress(const Move* move, Player* player) {
+    return MIN(LinkAnimProgress(player) / move->span, 1.0f);
+}
+
 void StepLayer(Layer& layer, Player* player, f32 loopSpeed) {
     const Move* move = layer.move;
     f32 end = EndFrame(move);
@@ -316,7 +352,7 @@ void StepLayer(Layer& layer, Player* player, f32 loopSpeed) {
             layer.skel.playSpeed = loopSpeed;
             break;
         case Mode::Sync:
-            layer.skel.curFrame = move->start + (end - move->start) * LinkAnimProgress(player);
+            layer.skel.curFrame = move->start + (end - move->start) * MoveProgress(move, player);
             break;
         case Mode::Once:
             if (end >= move->start) {
@@ -332,7 +368,7 @@ void StepLayer(Layer& layer, Player* player, f32 loopSpeed) {
     }
     SkelAnime_Update(&layer.skel);
     if (move->lift > 0.0f) {
-        layer.joints[0].y += (s16)(move->lift * sinf(M_PI * LinkAnimProgress(player)));
+        layer.joints[0].y += (s16)(move->lift * sinf(M_PI * MoveProgress(move, player)));
     }
 }
 
@@ -373,7 +409,11 @@ const Move* Locomotion(Player* player, f32* loopSpeed, bool* legsOnly) {
         return HasAnimation(idle->anim) ? idle : &kHips;
     }
 
-    Dir dir = IsTargeting(player) ? TravelDirection(player) : Dir::Forward;
+    // Without Z-targeting she faces where she goes, except when sliding backwards (e.g. out of a backflip).
+    Dir dir = TravelDirection(player);
+    if (!IsTargeting(player) && dir != Dir::Back) {
+        dir = Dir::Forward;
+    }
     switch (dir) {
         case Dir::Forward:
             if (speed > kRunThreshold && HasAnimation(kRun.anim)) {
@@ -387,6 +427,10 @@ const Move* Locomotion(Player* player, f32* loopSpeed, bool* legsOnly) {
             *loopSpeed = CLAMP(speed / kWalkReferenceSpeed, 0.5f, 3.0f);
             return &kWalk;
         case Dir::Back:
+            if (speed > kRunThreshold && HasAnimation(kRun.anim)) {
+                *loopSpeed = -CLAMP(speed / kRunReferenceSpeed, 0.75f, 3.0f);
+                return &kRun;
+            }
             if (sShowSwords && HasAnimation(kFightWalk.anim)) {
                 *loopSpeed = -CLAMP(speed / kFightWalkReferenceSpeed, 0.5f, 2.5f);
                 return &kFightWalk;
@@ -399,16 +443,22 @@ const Move* Locomotion(Player* player, f32* loopSpeed, bool* legsOnly) {
                 *loopSpeed = CLAMP(speed / kWalkReferenceSpeed, 0.5f, 3.0f);
                 return &kWalk;
             }
-            // the fighter circles to her right when the animation plays forwards
-            *loopSpeed = CLAMP(speed / kStrafeReferenceSpeed, 0.5f, 3.0f) * ((dir == Dir::Right) ? 1.0f : -1.0f);
+            // the fighter's circling steps go to her left when played backwards; right is the mirrored copy
+            *loopSpeed = -CLAMP(speed / kStrafeReferenceSpeed, 0.5f, 3.0f);
             *legsOnly = !sShowSwords;
-            return &kStrafe;
+            return (dir == Dir::Right && HasAnimation(kStrafeMirror.anim)) ? &kStrafeMirror : &kStrafe;
     }
     return &kIdle;
 }
 
 bool IsAttack(const Move* move) {
     return move == &kSlash || move == &kSlashEnd || move == &kHeavy || move == &kHeavyEnd;
+}
+
+// moves that give way to her walk/run when Link moves while his animation is stalled (see Nabooru_OnPlayerUpdate)
+bool YieldsToLocomotion(const Move* move) {
+    return IsAttack(move) || move == &kSpinEnd || move == &kLandQuick || move == &kBackflipEnd ||
+           move == &kJumpSlashEnd || move == &kLand || move == &kLandShort;
 }
 
 void UpdateEyes() {
@@ -456,10 +506,45 @@ void Nabooru_OnPlayerUpdate() {
     f32 stepDistance = sqrtf(SQ(player->actor.world.pos.x - sPrevPos.x) + SQ(player->actor.world.pos.z - sPrevPos.z));
     sPrevPos = player->actor.world.pos;
 
-    const Move* body = MatchRule(player->skelAnime.animation);
+    // While Z-targeting, Link's walk/run is blended into his skeleton separately: his main animation then stalls on
+    // whatever came before (often a slash recovery) while he moves. Treat that as locomotion.
+    SkelAnime* link = &player->skelAnime;
+    bool stalled = link->animation == sLinkPrevAnim && link->curFrame == sLinkPrevFrame;
+    sLinkStalledFrames = stalled ? sLinkStalledFrames + 1 : 0;
+    sLinkPrevAnim = link->animation;
+    sLinkPrevFrame = link->curFrame;
+
+    const Move* body = MatchRule(link->animation);
     const Move* overlay = nullptr;
     f32 bodySpeed = 1.0f, overlaySpeed = 1.0f;
     bool shielding = player->stateFlags1 & PLAYER_STATE1_SHIELDING;
+    bool freezeBody = false;
+
+    if (YieldsToLocomotion(body) && sLinkStalledFrames >= 2 && player->actor.speedXZ > kMovingThreshold) {
+        body = nullptr;
+    }
+    if (body == &kAirborne && (sBody.move == &kBackflip || sBody.move == &kJumpSlashAir)) {
+        // Link briefly plays his fall between a flip and its landing: finish the flip instead
+        body = sBody.move;
+        freezeBody = true;
+    }
+    if (body == &kTired && sShowSwords) {
+        body = &kTiredSwords;
+    }
+
+    if (body == nullptr && player->actor.bgCheckFlags & BGCHECKFLAG_GROUND && HasAnimation(kLandQuick.anim)) {
+        // Link lands straight into his run when the stick is held, without a landing of his own
+        bool cutShort = (sBody.move == &kLand || sBody.move == &kLandShort) && sBody.skel.curFrame < 10.0f;
+        if (sBody.move == &kAirborne || cutShort) {
+            sLandingFrames = kLandQuickFrames;
+        }
+        if (sLandingFrames > 0) {
+            sLandingFrames--;
+            body = &kLandQuick;
+        }
+    } else {
+        sLandingFrames = 0;
+    }
 
     if (body == nullptr) {
         bool legsOnly = false;
@@ -467,8 +552,8 @@ void Nabooru_OnPlayerUpdate() {
         bool moving = player->actor.speedXZ > kMovingThreshold;
         if (shielding && HasAnimation(kBlock.anim)) {
             if (moving) {
-                overlay = &kBlock; // guard up while walking
-                sMask = Mask::Upper;
+                overlay = &kBlock; // guard up while walking: her arms only, so she still looks ahead
+                sMask = Mask::Arms;
             } else if (IsTargeting(player)) {
                 body = &kBlock;
             } else {
@@ -481,11 +566,6 @@ void Nabooru_OnPlayerUpdate() {
                                                : &kHips; // empty-handed: her relaxed upper body over the sideways steps
             sMask = Mask::Upper;
         }
-        if (LinkAnimName(player->skelAnime.animation) != nullptr &&
-            strstr(LinkAnimName(player->skelAnime.animation), "defense_end") != nullptr) {
-            body = &kBlockEnd;
-            overlay = nullptr;
-        }
     } else if (IsAttack(body) && stepDistance > kAttackStepThreshold && HasAnimation(kFightWalk.anim)) {
         // Link's slashes carry him forward: let her legs step instead of sliding.
         overlay = &kFightWalk;
@@ -494,7 +574,11 @@ void Nabooru_OnPlayerUpdate() {
     }
 
     SetMove(sBody, body, true);
-    StepLayer(sBody, player, bodySpeed);
+    if (freezeBody) {
+        SkelAnime_Update(&sBody.skel);
+    } else {
+        StepLayer(sBody, player, bodySpeed);
+    }
 
     if (overlay != nullptr) {
         SetMove(sOverlay, overlay, sOverlayWeight > 0.0f);
@@ -564,8 +648,12 @@ bool SampleJointRotation(const char* path, s32 frame, s32 joint, Vec3s* out) {
 // Scimitar rotation relative to her hand: from the layer posing her arms if it has sword data, else her default grip.
 bool GetSwordRotation(bool leftHand, Vec3s* rot) {
     s32 joint = leftHand ? 1 : 2;
-    const Layer& arms = (sOverlayWeight >= 0.5f && sMask == Mask::Upper) ? sOverlay : sBody;
-    if (arms.move != nullptr && SampleJointRotation(arms.move->swords, (s32)arms.skel.curFrame, joint, rot)) {
+    const Layer& arms = (sOverlayWeight >= 0.5f && (sMask == Mask::Upper || sMask == Mask::Arms)) ? sOverlay : sBody;
+    f32 frame = (arms.move != nullptr && arms.move->swordsFrame >= 0.0f) ? arms.move->swordsFrame : arms.skel.curFrame;
+    if (arms.move == &sForced && sForcedSwordsFrame >= 0.0f) {
+        frame = sForcedSwordsFrame;
+    }
+    if (arms.move != nullptr && SampleJointRotation(arms.move->swords, (s32)frame, joint, rot)) {
         return true;
     }
     return SampleJointRotation(kDefaultSwords, 0, joint, rot);
@@ -586,7 +674,8 @@ void PlayAsNabooru_DebugState(const char** move, float* frame) {
 
 // For tools: hold one frame of one of her animations (`name` as in gPlayAsNabooru<name>Anim, or a full resource
 // path); an empty name returns to normal.
-void PlayAsNabooru_DebugForce(const char* name, float frame) {
+void PlayAsNabooru_DebugForce(const char* name, float frame, const char* swords, float swordsFrame) {
+    sForcedSwordsFrame = swordsFrame;
     sForcedName = name;
     if (sForcedName.empty()) {
         sBody.move = nullptr;
@@ -597,7 +686,8 @@ void PlayAsNabooru_DebugForce(const char* name, float frame) {
         sForcedSwords.clear();
     } else {
         sForcedAnim = "__OTR__objects/object_nb/gPlayAsNabooru" + sForcedName + "Anim";
-        sForcedSwords = "__OTR__objects/object_nb/gPlayAsNabooru" + sForcedName + "SwordsAnim";
+        sForcedSwords =
+            "__OTR__objects/object_nb/gPlayAsNabooru" + std::string((swords && *swords) ? swords : name) + "SwordsAnim";
     }
     sForced = { sForcedName.c_str(), sForcedAnim.c_str(), sForcedSwords.empty() ? nullptr : sForcedSwords.c_str(),
                 Mode::Pose, frame };

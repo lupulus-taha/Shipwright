@@ -115,6 +115,7 @@ JOBS = [
 RUN_ARM_SWING_GAIN = (1.4, 1.2, 1.0)
 # Her walk's torso twist and head sway, layered on the run's own lean (Nabooru limb -> gain).
 NB_TORSO, NB_HEAD = 7, 14
+NB_BLANK = 15
 RUN_CORE_SWAY_GAIN = {NB_TORSO: 2.3, NB_HEAD: 1.0}
 
 RESOURCE_HEADER = bytes.fromhex("00000000" "4d4e414f" "00000000" "efbeaddeefbeadde") + bytes(64 - 20)
@@ -293,9 +294,18 @@ def bend_forward(table_frame, nb_limbs, limb, degrees):
     table_frame[limb + 1] = zyx_from_rot(local)
 
 
-def make_tired(stand_table, nb_limbs):
-    """Critical-health idle: her scimitar stance, bent forward and heaving for breath."""
-    out = np.repeat(stand_table[:1], TIRED_FRAMES, axis=0).copy()
+def turn(table_frame, nb_limbs, limb, degrees):
+    """Turn `limb` (and everything above it) about the vertical axis, pivoting at the limb."""
+    W, _ = fk(nb_limbs, table_frame)
+    parent = nb_limbs[limb].parent
+    a = math.radians(degrees)
+    yaw = np.array([[math.cos(a), 0, math.sin(a)], [0, 1, 0], [-math.sin(a), 0, math.cos(a)]])
+    table_frame[limb + 1] = zyx_from_rot(W[parent].T @ yaw @ W[limb])
+
+
+def make_tired(base_frame, nb_limbs):
+    """Critical-health idle: her relaxed stance, bent forward and heaving for breath."""
+    out = np.repeat(base_frame[None], TIRED_FRAMES, axis=0).copy()
     for i in range(TIRED_FRAMES):
         breath = math.sin(2 * math.pi * i / TIRED_FRAMES)
         bend_forward(out[i], nb_limbs, NB_TORSO, TIRED_TORSO_BEND[0] + TIRED_TORSO_BEND[1] * breath)
@@ -304,13 +314,120 @@ def make_tired(stand_table, nb_limbs):
     return out
 
 
-def make_relaxed(stand_table, walk_table):
-    """Empty-handed idle: the fighter's stance with her arms hanging at her sides (the average of her walk swing)."""
-    out = stand_table.copy()
-    for limb in NB_L_ARM + NB_R_ARM:
-        q = quat_mean([quat_from_rot(rot_zyx(frame[limb + 1])) for frame in walk_table])
-        out[:, limb + 1] = zyx_from_rot(rot_from_quat(q))
+RELAXED_FRAMES = 60  # 3 seconds
+RELAXED_ARM_SWAY = 0.12  # fraction of her walk's arm swing
+RELAXED_BREATH = 1.2  # degrees of torso bend
+RELAXED_LOOK = 5.0  # degrees her head turns either way
+
+
+def make_relaxed(stand_table, walk_table, nb_limbs):
+    """Empty-handed idle: the fighter's stance with her arms hanging at her sides (her walk's average arm pose),
+    breathing, arms swaying a little and her head slowly looking around."""
+    walk_q = {limb: [quat_from_rot(rot_zyx(frame[limb + 1])) for frame in walk_table] for limb in NB_L_ARM + NB_R_ARM}
+    mean_q = {limb: quat_mean(qs) for limb, qs in walk_q.items()}
+    out = np.repeat(stand_table[:1], RELAXED_FRAMES, axis=0).copy()
+    for i in range(RELAXED_FRAMES):
+        t = i / RELAXED_FRAMES
+        k = int(t * len(walk_table)) % len(walk_table)
+        for limb in NB_L_ARM + NB_R_ARM:
+            out[i, limb + 1] = zyx_from_rot(rot_from_quat(slerp(mean_q[limb], walk_q[limb][k], RELAXED_ARM_SWAY)))
+        bend_forward(out[i], nb_limbs, NB_TORSO, RELAXED_BREATH * math.sin(2 * math.pi * 2 * t))
+        turn(out[i], nb_limbs, NB_HEAD, RELAXED_LOOK * math.sin(2 * math.pi * t))
     return out
+
+
+def make_guard(block_table, neutral_table, nb_limbs):
+    """Standing guard: the fighter's crossed-scimitar block (first frame of her block), but with the stance's upright
+    torso and head instead of hunching over her blades. Her arms keep their pose relative to the torso."""
+    out = block_table[:1].copy()
+    Wb, _ = fk(nb_limbs, out[0])
+    Wn, _ = fk(nb_limbs, neutral_table[0])
+    out[0, NB_TORSO + 1] = zyx_from_rot(Wb[nb_limbs[NB_TORSO].parent].T @ Wn[NB_TORSO])
+    out[0, NB_HEAD + 1] = neutral_table[0, NB_HEAD + 1]
+    return out
+
+
+SCIMITAR_BLADE = np.array([-0.25, -1.0, 0.0])  # blade direction in the scimitar's own frame (tip at -882, -3350)
+IDLE_BLADE = np.array([0.3, -0.45, 0.85])  # left blade in model space: forward, down, a little outward (+X = her left)
+
+
+def resting_swords(base_frame, nb_limbs, roll):
+    """Scimitars for an idle with her arms hanging: blades pointing forward and down, clear of her legs.
+    `roll` (+1/-1) picks which way the flat of the blade faces."""
+    W, _ = fk(nb_limbs, base_frame)
+    out = np.zeros((1, 3, 3), int)
+    a1 = SCIMITAR_BLADE / np.linalg.norm(SCIMITAR_BLADE)
+    a3 = np.array([0.0, 0.0, 1.0])
+    A = np.column_stack([a1, np.cross(a3, a1), a3])
+    for joint, hand, side in ((1, 10, 1.0), (2, 13, -1.0)):
+        d = IDLE_BLADE * np.array([side, 1, 1])
+        d /= np.linalg.norm(d)
+        lateral = np.array([side * roll, 0.0, 0.0])
+        b3 = lateral - lateral.dot(d) * d
+        b3 /= np.linalg.norm(b3)
+        B = np.column_stack([d, np.cross(b3, d), b3])
+        out[0, joint] = zyx_from_rot(W[hand].T @ B @ A.T)
+    return out
+
+
+# Left/right limb pairs, and the reflection that maps each limb's local frame onto its mirror image's.
+NB_MIRROR = {1: 4, 2: 5, 3: 6, 8: 11, 9: 12, 10: 13}
+NB_MIRROR.update({b: a for a, b in NB_MIRROR.items()})
+MODEL_REFLECT = np.diag([-1.0, 1.0, 1.0])  # her left/right axis in model space is X
+REFLECTIONS = [np.diag(d) for d in ((-1.0, 1, 1), (1, -1.0, 1), (1, 1, -1.0), (-1.0, -1, -1))]
+
+
+def choose_reflections(nb_limbs, reference_table):
+    """For every limb, the local reflection under which a symmetric pose maps onto itself (judged on the average
+    rotations over a reference cycle, her walk), constrained by mirrored child joint offsets where there are any."""
+    means = [rot_from_quat(quat_mean([quat_from_rot(rot_zyx(f[i + 1])) for f in reference_table]))
+             for i in range(len(nb_limbs))]
+    L = [None] * len(nb_limbs)
+    for i, limb in enumerate(nb_limbs):  # parents first
+        Lp = MODEL_REFLECT if limb.parent < 0 else L[limb.parent]
+        m = NB_MIRROR.get(i, i)
+        children = [c for c, l in enumerate(nb_limbs) if l.parent == i]
+
+        def cost(Li):
+            rot = np.linalg.norm(means[i] - Lp @ means[m] @ Li)
+            offsets = sum(np.linalg.norm(Li @ nb_limbs[c].joint - nb_limbs[NB_MIRROR.get(c, c)].joint) for c in children)
+            return offsets * 10 + rot
+
+        L[i] = min(REFLECTIONS, key=cost)
+    return L
+
+
+def mirror_table(table, nb_limbs, L):
+    """The same motion mirrored left to right."""
+    out = table.copy()
+    out[:, 0, 0] = -table[:, 0, 0]
+    for f in range(len(table)):
+        for i, limb in enumerate(nb_limbs):
+            Lp = MODEL_REFLECT if limb.parent < 0 else L[limb.parent]
+            out[f, i + 1] = zyx_from_rot(Lp @ rot_zyx(table[f, NB_MIRROR.get(i, i) + 1]) @ L[i])
+    return out
+
+
+def mirror_swords(swords, L):
+    """Mirrored scimitars: swapped hands, each reflected in its hand's frame."""
+    out = swords.copy()
+    for f in range(len(swords)):
+        for j, hand in ((1, 10), (2, 13)):
+            out[f, j] = zyx_from_rot(L[hand] @ rot_zyx(swords[f, 3 - j]) @ L[hand])
+    return out
+
+
+def verify_mirror(nb_limbs, table, mirrored):
+    """Max distance between each mirrored joint and the reflection of its counterpart."""
+    err = 0.0
+    for f in range(len(table)):
+        _, P = fk(nb_limbs, table[f])
+        _, Pm = fk(nb_limbs, mirrored[f])
+        for i in range(len(nb_limbs)):
+            if i == NB_BLANK:  # an asymmetric helper bone with no geometry
+                continue
+            err = max(err, np.linalg.norm(Pm[i] - MODEL_REFLECT @ P[NB_MIRROR.get(i, i)]))
+    return err
 
 
 def encode_animation(table: np.ndarray) -> bytes:
@@ -367,6 +484,7 @@ def main():
 
     resources = {}
     tables = {}
+    sword_tables = {}
     for job in JOBS:
         src = job.source
         if src.obj not in src_limbs:
@@ -391,20 +509,35 @@ def main():
             if sword_err > 1e-3:
                 sys.exit(f"sword check failed for {job.out}: {sword_err}")
             resources[f"objects/object_nb/{job.out[: -len('Anim')]}SwordsAnim"] = encode_animation(swords)
+            sword_tables[job.out] = swords
         if args.debug_c:
             args.debug_c.mkdir(parents=True, exist_ok=True)
             write_debug_c(args.debug_c / f"{job.out}.c", job.out, table)
 
-    relaxed = make_relaxed(tables["gPlayAsNabooruStandAnim"], nb_walk.table)
-    resources["objects/object_nb/gPlayAsNabooruRelaxedAnim"] = encode_animation(relaxed)
-    print(f"gPlayAsNabooruRelaxedAnim: {len(relaxed)} frames, her stance with relaxed arms")
-    if args.debug_c:
-        write_debug_c(args.debug_c / "gPlayAsNabooruRelaxedAnim.c", "gPlayAsNabooruRelaxedAnim", relaxed)
-    tired = make_tired(tables["gPlayAsNabooruStandAnim"], nb_limbs)
-    resources["objects/object_nb/gPlayAsNabooruTiredAnim"] = encode_animation(tired)
-    print(f"gPlayAsNabooruTiredAnim: {TIRED_FRAMES} frames, her stance bent over and breathing hard")
-    if args.debug_c:
-        write_debug_c(args.debug_c / "gPlayAsNabooruTiredAnim.c", "gPlayAsNabooruTiredAnim", tired)
+    def add(name, table, note, swords=None):
+        resources[f"objects/object_nb/gPlayAsNabooru{name}Anim"] = encode_animation(table)
+        if swords is not None:
+            resources[f"objects/object_nb/gPlayAsNabooru{name}SwordsAnim"] = encode_animation(swords)
+        print(f"gPlayAsNabooru{name}Anim: {len(table)} frames, {note}")
+        if args.debug_c:
+            write_debug_c(args.debug_c / f"gPlayAsNabooru{name}Anim.c", f"gPlayAsNabooru{name}Anim", table)
+
+    relaxed = make_relaxed(tables["gPlayAsNabooruStandAnim"], nb_walk.table, nb_limbs)
+    add("Relaxed", relaxed, "her stance with relaxed, swaying arms")
+    # resting grip: blades forward and down, their curve rising towards the tip
+    resources["objects/object_nb/gPlayAsNabooruRestingSwordsAnim"] = encode_animation(resting_swords(relaxed[0], nb_limbs, -1))
+    add("Tired", make_tired(relaxed[0], nb_limbs), "relaxed stance bent over, breathing hard")
+    guard = make_guard(tables["gPlayAsNabooruBlockAnim"], tables["gPlayAsNabooruNeutralAnim"], nb_limbs)
+    add("Guard", guard, "crossed-scimitar block standing upright", sword_tables["gPlayAsNabooruBlockAnim"][:1])
+
+    reflections = choose_reflections(nb_limbs, nb_walk.table)
+    side = tables["gPlayAsNabooruSidestepAnim"]
+    side_mirror = mirror_table(side, nb_limbs, reflections)
+    err = verify_mirror(nb_limbs, side, side_mirror)
+    if err > 2.0:
+        sys.exit(f"mirror check failed: {err}")
+    add("SidestepMirror", side_mirror, f"sidestep mirrored (max joint error {err:.2f})",
+        mirror_swords(sword_tables["gPlayAsNabooruSidestepAnim"], reflections))
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(args.out, "w", zipfile.ZIP_DEFLATED) as z:
