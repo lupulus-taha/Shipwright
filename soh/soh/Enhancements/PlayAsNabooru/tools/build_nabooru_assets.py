@@ -198,7 +198,9 @@ def overlay_walk_motion(run_table, nb_limbs, walk_table, limb_gains, keep_run_po
     """Gives limbs of a run Nabooru's own walk motion, phase-matched to the run's legs and exaggerated by `gain`.
 
     The motion is her walk's deviation from its mean pose. It is applied around her walk's mean pose (arms: she
-    shouldn't keep the source's weapon grip) or around the run's own mean pose (torso/head: keeps the run's lean)."""
+    shouldn't keep the source's weapon grip) or around her walk's mean pose plus the run's lean (torso/head). The
+    run's average twist around the spine is dropped: the spear guard runs with her shoulders turned ~41 degrees to
+    the side (and her head turned back), which only makes sense while carrying a spear."""
     out = run_table.copy()
     run_phase = left_foot_forward_phase(nb_limbs, run_table)
     walk_phase = left_foot_forward_phase(nb_limbs, walk_table)
@@ -206,8 +208,13 @@ def overlay_walk_motion(run_table, nb_limbs, walk_table, limb_gains, keep_run_po
     for limb, gain in limb_gains.items():
         qs = [quat_from_rot(rot_zyx(walk_table[w, limb + 1])) for w in range(nw)]
         walk_mean = quat_mean(qs)
-        base = quat_mean([quat_from_rot(rot_zyx(run_table[f, limb + 1])) for f in range(nr)]) if keep_run_pose \
-            else walk_mean
+        base = walk_mean
+        if keep_run_pose:
+            run_mean = quat_mean([quat_from_rot(rot_zyx(run_table[f, limb + 1])) for f in range(nr)])
+            # run_mean = walk_mean * D in the limb's own axes; X runs along the spine (twist), Y/Z are bend/lean.
+            D = rot_from_quat(walk_mean).T @ rot_from_quat(run_mean)
+            _, bend, lean = zyx_from_rot(D)
+            base = quat_mul(walk_mean, quat_from_rot(rot_zyx((0, bend, lean))))
         for f in range(nr):
             phase = (f / nr - run_phase + walk_phase) % 1.0
             w = phase * nw
