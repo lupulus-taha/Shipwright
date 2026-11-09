@@ -85,8 +85,30 @@ class Job:
     arms_from_walk: bool = False  # replace arms with Nabooru's own (phase-matched, exaggerated) walk swing
 
 
+# Fighter (twin scimitars) sword limbs: each hangs off the wrist next to the hand, with zero offset.
+# (wrist, hand, sword) source limb indices, left then right.
+FIGHTER_SWORDS = ((13, 14, 15), (8, 9, 10))
+
 JOBS = [
     Job("gPlayAsNabooruRunAnim", GUARD, "gObjectGlaRunAnim", arms_from_walk=True),
+    # twin-scimitar fighter: attacks, defense, movement, reactions
+    Job("gPlayAsNabooruSlashAnim", FIGHTER, "gGerudoRedSlashAnim"),
+    Job("gPlayAsNabooruSpinAttackAnim", FIGHTER, "gGerudoRedSpinAttackAnim"),
+    Job("gPlayAsNabooruFlipAnim", FIGHTER, "gGerudoRedFlipAnim"),
+    Job("gPlayAsNabooruBlockAnim", FIGHTER, "gGerudoRedBlockAnim"),
+    Job("gPlayAsNabooruDefeatAnim", FIGHTER, "gGerudoRedDefeatAnim"),
+    Job("gPlayAsNabooruDamageAnim", FIGHTER, "gGerudoRedDamageAnim"),
+    Job("gPlayAsNabooruFightWalkAnim", FIGHTER, "gGerudoRedWalkAnim"),
+    Job("gPlayAsNabooruSidestepAnim", FIGHTER, "gGerudoRedSidestepAnim"),
+    Job("gPlayAsNabooruJumpAnim", FIGHTER, "gGerudoRedJumpAnim"),
+    Job("gPlayAsNabooruStandAnim", FIGHTER, "gGerudoRedStandAnim"),
+    Job("gPlayAsNabooruNeutralAnim", FIGHTER, "gGerudoRedNeutralAnim"),
+    # spear guard (several of these are unused in the game)
+    Job("gPlayAsNabooruGuardSlashAnim", GUARD, "gObjectGlaAttackAnim"),
+    Job("gPlayAsNabooruGuardSlashRecoverAnim", GUARD, "gObjectGlaRecoverFromAttackAnim"),
+    Job("gPlayAsNabooruFaintAnim", GUARD, "gObjectGlaFaintAnim"),
+    Job("gPlayAsNabooruCrouchAnim", GUARD, "gObjectGlaKneelAnim"),
+    Job("gPlayAsNabooruCrouchingAnim", GUARD, "gObjectGlaKneelingAnim"),
 ]
 
 # How much to exaggerate her walk arm swing when running (upper arm, forearm, hand).
@@ -232,6 +254,29 @@ def arms_from_walk(run_table, nb_limbs, walk_table):
     return overlay_walk_motion(out, nb_limbs, walk_table, RUN_CORE_SWAY_GAIN, keep_run_pose=True)
 
 
+def sword_table(src_anim):
+    """Companion 'animation' with the scimitars relative to Nabooru's hands:
+    joint 0 = unused root translation, joint 1 = left sword, joint 2 = right sword.
+    Nabooru's hand = wrist * hand, the sword hangs off the wrist: sword relative to her hand = hand^-1 * sword."""
+    out = np.zeros((src_anim.frames, 3, 3), int)
+    for f in range(src_anim.frames):
+        t = src_anim.table[f]
+        for j, (_, hand, sword) in enumerate(FIGHTER_SWORDS):
+            out[f, j + 1] = zyx_from_rot(rot_zyx(t[hand + 1]).T @ rot_zyx(t[sword + 1]))
+    return out
+
+
+def verify_swords(nb_limbs, src_limbs, nb_table, src_table, swords):
+    """sword world orientation through Nabooru's hand must equal the fighter's sword limb."""
+    worst = 0.0
+    for f in range(len(nb_table)):
+        Wn, _ = fk(nb_limbs, nb_table[f])
+        Wg, _ = fk(src_limbs, src_table[f])
+        for j, (nb_hand, (_, _, sword)) in enumerate(zip((10, 13), FIGHTER_SWORDS)):
+            worst = max(worst, float(np.abs(Wn[nb_hand] @ rot_zyx(swords[f, j + 1]) - Wg[sword]).max()))
+    return worst
+
+
 # ---------------------------------------------------------------- output
 def encode_animation(table: np.ndarray) -> bytes:
     """SoH binary Normal animation (no static values: index k*frames + frame)."""
@@ -303,6 +348,12 @@ def main():
         if err > 2.0:
             sys.exit(f"retarget check failed for {job.out}")
         resources[f"objects/object_nb/{job.out}"] = encode_animation(table)
+        if src is FIGHTER:
+            swords = sword_table(anim)
+            sword_err = verify_swords(nb_limbs, limbs, table, anim.table, swords)
+            if sword_err > 1e-3:
+                sys.exit(f"sword check failed for {job.out}: {sword_err}")
+            resources[f"objects/object_nb/{job.out[: -len('Anim')]}SwordsAnim"] = encode_animation(swords)
         if args.debug_c:
             args.debug_c.mkdir(parents=True, exist_ok=True)
             write_debug_c(args.debug_c / f"{job.out}.c", job.out, table)
