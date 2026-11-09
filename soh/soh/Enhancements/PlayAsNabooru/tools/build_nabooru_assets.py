@@ -278,6 +278,41 @@ def verify_swords(nb_limbs, src_limbs, nb_table, src_table, swords):
 
 
 # ---------------------------------------------------------------- output
+TIRED_FRAMES = 30
+TIRED_TORSO_BEND = (12.0, 3.5)  # degrees forward: mean, breathing amplitude
+TIRED_HEAD_BEND = (8.0, 2.5)
+
+
+def bend_forward(table_frame, nb_limbs, limb, degrees):
+    """Tilt `limb` (and everything above it) forward about her side-to-side axis, pivoting at the limb."""
+    W, _ = fk(nb_limbs, table_frame)
+    parent = nb_limbs[limb].parent
+    a = math.radians(degrees)
+    bend = np.array([[1, 0, 0], [0, math.cos(a), -math.sin(a)], [0, math.sin(a), math.cos(a)]])  # +Z is forward
+    local = W[parent].T @ bend @ W[limb]
+    table_frame[limb + 1] = zyx_from_rot(local)
+
+
+def make_tired(stand_table, nb_limbs):
+    """Critical-health idle: her scimitar stance, bent forward and heaving for breath."""
+    out = np.repeat(stand_table[:1], TIRED_FRAMES, axis=0).copy()
+    for i in range(TIRED_FRAMES):
+        breath = math.sin(2 * math.pi * i / TIRED_FRAMES)
+        bend_forward(out[i], nb_limbs, NB_TORSO, TIRED_TORSO_BEND[0] + TIRED_TORSO_BEND[1] * breath)
+        bend_forward(out[i], nb_limbs, NB_HEAD, TIRED_HEAD_BEND[0] + TIRED_HEAD_BEND[1] * math.sin(
+            2 * math.pi * i / TIRED_FRAMES + 0.6))
+    return out
+
+
+def make_relaxed(stand_table, walk_table):
+    """Empty-handed idle: the fighter's stance with her arms hanging at her sides (the average of her walk swing)."""
+    out = stand_table.copy()
+    for limb in NB_L_ARM + NB_R_ARM:
+        q = quat_mean([quat_from_rot(rot_zyx(frame[limb + 1])) for frame in walk_table])
+        out[:, limb + 1] = zyx_from_rot(rot_from_quat(q))
+    return out
+
+
 def encode_animation(table: np.ndarray) -> bytes:
     """SoH binary Normal animation (no static values: index k*frames + frame)."""
     frames, joints, _ = table.shape
@@ -331,6 +366,7 @@ def main():
     src_limbs = {}
 
     resources = {}
+    tables = {}
     for job in JOBS:
         src = job.source
         if src.obj not in src_limbs:
@@ -348,6 +384,7 @@ def main():
         if err > 2.0:
             sys.exit(f"retarget check failed for {job.out}")
         resources[f"objects/object_nb/{job.out}"] = encode_animation(table)
+        tables[job.out] = table
         if src is FIGHTER:
             swords = sword_table(anim)
             sword_err = verify_swords(nb_limbs, limbs, table, anim.table, swords)
@@ -357,6 +394,17 @@ def main():
         if args.debug_c:
             args.debug_c.mkdir(parents=True, exist_ok=True)
             write_debug_c(args.debug_c / f"{job.out}.c", job.out, table)
+
+    relaxed = make_relaxed(tables["gPlayAsNabooruStandAnim"], nb_walk.table)
+    resources["objects/object_nb/gPlayAsNabooruRelaxedAnim"] = encode_animation(relaxed)
+    print(f"gPlayAsNabooruRelaxedAnim: {len(relaxed)} frames, her stance with relaxed arms")
+    if args.debug_c:
+        write_debug_c(args.debug_c / "gPlayAsNabooruRelaxedAnim.c", "gPlayAsNabooruRelaxedAnim", relaxed)
+    tired = make_tired(tables["gPlayAsNabooruStandAnim"], nb_limbs)
+    resources["objects/object_nb/gPlayAsNabooruTiredAnim"] = encode_animation(tired)
+    print(f"gPlayAsNabooruTiredAnim: {TIRED_FRAMES} frames, her stance bent over and breathing hard")
+    if args.debug_c:
+        write_debug_c(args.debug_c / "gPlayAsNabooruTiredAnim.c", "gPlayAsNabooruTiredAnim", tired)
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(args.out, "w", zipfile.ZIP_DEFLATED) as z:
