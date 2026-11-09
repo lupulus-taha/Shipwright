@@ -697,6 +697,10 @@ void SohMenu::AddMenuEnhancements() {
         .RaceDisable(false)
         .Options(CheckboxOptions().Tooltip(
             "Turns off the Level of Detail setting, making models use their Higher-Poly variants at any distance."));
+    AddWidget(path, "Play as Nabooru", WIDGET_CVAR_CHECKBOX)
+        .CVar(CVAR_ENHANCEMENT("PlayAsNabooru"))
+        .Options(CheckboxOptions().Tooltip(
+            "Replaces adult Link's model with Nabooru, using her own skeleton and animations. Work in progress."));
     AddWidget(path, "Enemy Health Bars", WIDGET_CVAR_CHECKBOX)
         .CVar(CVAR_ENHANCEMENT("EnemyHealthBar"))
         .Options(CheckboxOptions().Tooltip("Renders a health bar for Enemies when Z-Targeted."));

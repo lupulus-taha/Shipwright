@@ -12526,6 +12526,9 @@ void Player_Draw(Actor* thisx, PlayState* play2) {
 
         Player_DrawGameplay(play, this, lod, gCullBackDList, overrideLimbDraw);
 
+        // Lets enhancements draw a replacement character model with the player actor's model matrix still applied.
+        GameInteractor_ExecuteOnPlayerDraw(overrideLimbDraw == Player_OverrideLimbDrawGameplayFirstPerson);
+
         if (this->invincibilityTimer > 0) {
             POLY_OPA_DISP = Play_SetFog(play, POLY_OPA_DISP);
         }

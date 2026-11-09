@@ -26,6 +26,7 @@ DEFINE_HOOK(OnSceneSpawnActors, ());
 DEFINE_HOOK(OnLinkSkeletonInit, ());
 DEFINE_HOOK(OnLinkEquipmentChange, ());
 DEFINE_HOOK(OnPlayerUpdate, ());
+DEFINE_HOOK(OnPlayerDraw, (bool isFirstPerson));
 DEFINE_HOOK(OnSetDoAction, (uint16_t action));
 DEFINE_HOOK(OnPlayerSfx, (u16 sfxId));
 DEFINE_HOOK(OnOcarinaSongAction, ());
