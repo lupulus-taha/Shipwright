@@ -90,10 +90,10 @@ JOBS = [
 ]
 
 # How much to exaggerate her walk arm swing when running (upper arm, forearm, hand).
-RUN_ARM_SWING_GAIN = (1.7, 1.4, 1.0)
+RUN_ARM_SWING_GAIN = (1.4, 1.2, 1.0)
 # Her walk's torso twist and head sway, layered on the run's own lean (Nabooru limb -> gain).
 NB_TORSO, NB_HEAD = 7, 14
-RUN_CORE_SWAY_GAIN = {NB_TORSO: 1.8, NB_HEAD: 1.0}
+RUN_CORE_SWAY_GAIN = {NB_TORSO: 2.3, NB_HEAD: 1.0}
 
 RESOURCE_HEADER = bytes.fromhex("00000000" "4d4e414f" "00000000" "efbeaddeefbeadde") + bytes(64 - 20)
 
