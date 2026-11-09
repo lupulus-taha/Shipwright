@@ -91,6 +91,9 @@ JOBS = [
 
 # How much to exaggerate her walk arm swing when running (upper arm, forearm, hand).
 RUN_ARM_SWING_GAIN = (1.7, 1.4, 1.0)
+# Her walk's torso twist and head sway, layered on the run's own lean (Nabooru limb -> gain).
+NB_TORSO, NB_HEAD = 7, 14
+RUN_CORE_SWAY_GAIN = {NB_TORSO: 1.8, NB_HEAD: 1.0}
 
 RESOURCE_HEADER = bytes.fromhex("00000000" "4d4e414f" "00000000" "efbeaddeefbeadde") + bytes(64 - 20)
 
@@ -191,25 +194,35 @@ def left_foot_forward_phase(limbs, table):
     return int(np.argmax(lead)) / len(table)
 
 
-def arms_from_walk(run_table, nb_limbs, walk_table):
-    """Replace the arms of a run with Nabooru's own walk arm swing, phase-matched to the run's legs and
-    exaggerated around its mean pose."""
+def overlay_walk_motion(run_table, nb_limbs, walk_table, limb_gains, keep_run_pose):
+    """Gives limbs of a run Nabooru's own walk motion, phase-matched to the run's legs and exaggerated by `gain`.
+
+    The motion is her walk's deviation from its mean pose. It is applied around her walk's mean pose (arms: she
+    shouldn't keep the source's weapon grip) or around the run's own mean pose (torso/head: keeps the run's lean)."""
     out = run_table.copy()
     run_phase = left_foot_forward_phase(nb_limbs, run_table)
     walk_phase = left_foot_forward_phase(nb_limbs, walk_table)
     nw, nr = len(walk_table), len(run_table)
-    for limbs in (NB_L_ARM, NB_R_ARM):
-        for limb, gain in zip(limbs, RUN_ARM_SWING_GAIN):
-            qs = [quat_from_rot(rot_zyx(walk_table[w, limb + 1])) for w in range(nw)]
-            mean = quat_mean(qs)
-            for f in range(nr):
-                phase = (f / nr - run_phase + walk_phase) % 1.0
-                w = phase * nw
-                w0 = int(w) % nw
-                q = slerp(qs[w0], qs[(w0 + 1) % nw], w - int(w))
-                q = quat_mul(mean, quat_pow(quat_mul(quat_conj(mean), q), gain))
-                out[f, limb + 1] = zyx_from_rot(rot_from_quat(q))
+    for limb, gain in limb_gains.items():
+        qs = [quat_from_rot(rot_zyx(walk_table[w, limb + 1])) for w in range(nw)]
+        walk_mean = quat_mean(qs)
+        base = quat_mean([quat_from_rot(rot_zyx(run_table[f, limb + 1])) for f in range(nr)]) if keep_run_pose \
+            else walk_mean
+        for f in range(nr):
+            phase = (f / nr - run_phase + walk_phase) % 1.0
+            w = phase * nw
+            w0 = int(w) % nw
+            q = slerp(qs[w0], qs[(w0 + 1) % nw], w - int(w))
+            q = quat_mul(base, quat_pow(quat_mul(quat_conj(walk_mean), q), gain))
+            out[f, limb + 1] = zyx_from_rot(rot_from_quat(q))
     return out
+
+
+def arms_from_walk(run_table, nb_limbs, walk_table):
+    """Arms swing like her walk (exaggerated); torso and head get her walk's twist/sway on top of the run's lean."""
+    arms = {limb: gain for side in (NB_L_ARM, NB_R_ARM) for limb, gain in zip(side, RUN_ARM_SWING_GAIN)}
+    out = overlay_walk_motion(run_table, nb_limbs, walk_table, arms, keep_run_pose=False)
+    return overlay_walk_motion(out, nb_limbs, walk_table, RUN_CORE_SWAY_GAIN, keep_run_pose=True)
 
 
 # ---------------------------------------------------------------- output
@@ -276,9 +289,9 @@ def main():
         skip = ()
         if job.arms_from_walk:
             table = arms_from_walk(table, nb_limbs, nb_walk.table)
-            skip = NB_L_ARM + NB_R_ARM
+            skip = NB_L_ARM + NB_R_ARM + (NB_TORSO, NB_HEAD, 15, 16)  # torso moves everything above it
         err = verify(src, nb_limbs, limbs, table, anim.table, skip)
-        note = " (arms from her walk)" if job.arms_from_walk else ""
+        note = " (arms, torso sway from her walk)" if job.arms_from_walk else ""
         print(f"{job.out}: {anim.frames} frames from {job.anim}{note}; max joint error {err:.2f} units")
         if err > 2.0:
             sys.exit(f"retarget check failed for {job.out}")
