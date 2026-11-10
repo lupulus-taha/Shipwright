@@ -76,34 +76,22 @@ constexpr f32 kJumpSlashLift = 2000.0f;
 
 // locomotion and idles
 const Move kHips = { "Hips", gNabooruStandingHandsOnHipsAnim, nullptr, Mode::Loop };
-// empty-handed: arms at her sides; after a moment she folds her arms (the white-clothed Gerudo's motion)
-const Move kIdle = { "Idle", GEN(Relaxed), nullptr, Mode::Loop };
-const Move kFoldArms = { "FoldArms", GEN(FoldArms), nullptr, Mode::Once, 0, -1, 0.5f };
+// empty-handed, standing still she folds her arms: the white-clothed Gerudo's (unused) motion, which is stored
+// unfolding, played backwards
+const Move kIdle = { "Idle", GEN(Relaxed), nullptr, Mode::Loop }; // arms at her sides
+const Move kFoldArms = { "FoldArms", GEN(FoldArms), nullptr, Mode::Once, 6, 0, 0.6f };
 const Move kCrossedArms = { "CrossedArms", GEN(CrossedArms), nullptr, Mode::Loop };
-constexpr s32 kFoldArmsDelay = 30; // frames of standing still before she folds her arms
-// with scimitars: the fighter's stance, one blade on her shoulder and one held low
-const Move kIdleSwords = { "IdleSwords", GEN(ArmedIdle), GEN_SWORDS(ArmedIdle), Mode::Loop };
+// with scimitars (moves without sword data hold them in the fighter's grip): arms at her sides, blades hanging
+const Move kIdleSwords = { "IdleSwords", GEN(ArmedIdle), nullptr, Mode::Loop };
 const Move kTired = { "Tired", GEN(Tired), nullptr, Mode::Loop };
-const Move kTiredSwords = { .name = "TiredSwords",
-                            .anim = GEN(ArmedTired),
-                            .swords = GEN_SWORDS(ArmedTired),
-                            .mode = Mode::Loop,
-                            .swordsFrame = 0 };
+const Move kTiredSwords = { "TiredSwords", GEN(ArmedTired), nullptr, Mode::Loop };
 const Move kWalk = { "Walk", gNabooruWalkingAnim, nullptr, Mode::Loop };
 const Move kRun = { "Run", GEN(Run), nullptr, Mode::Loop };
 const Move kRunBack = { "RunBack", GEN(RunBack), nullptr, Mode::Loop }; // upright; played backwards
-// with scimitars out, her arms hold them as in her fighting stance
-const Move kArmedWalk = {
-    .name = "ArmedWalk", .anim = GEN(ArmedWalk), .swords = GEN_SWORDS(ArmedWalk), .mode = Mode::Loop, .swordsFrame = 0
-};
-const Move kArmedRun = {
-    .name = "ArmedRun", .anim = GEN(ArmedRun), .swords = GEN_SWORDS(ArmedRun), .mode = Mode::Loop, .swordsFrame = 0
-};
-const Move kArmedRunBack = { .name = "ArmedRunBack",
-                             .anim = GEN(ArmedRunBack),
-                             .swords = GEN_SWORDS(ArmedRunBack),
-                             .mode = Mode::Loop,
-                             .swordsFrame = 0 };
+// with scimitars out: her own arm swing, wrists turned to keep the blades off her body
+const Move kArmedWalk = { "ArmedWalk", GEN(ArmedWalk), nullptr, Mode::Loop };
+const Move kArmedRun = { "ArmedRun", GEN(ArmedRun), nullptr, Mode::Loop };
+const Move kArmedRunBack = { "ArmedRunBack", GEN(ArmedRunBack), nullptr, Mode::Loop };
 const Move kStance = { "Stance", GEN(Neutral), GEN_SWORDS(Neutral), Mode::Loop };
 const Move kFightWalk = { "FightWalk", GEN(FightWalk), GEN_SWORDS(FightWalk), Mode::Loop };
 const Move kStrafe = { "Strafe", GEN(Sidestep), GEN_SWORDS(Sidestep), Mode::Loop };
@@ -134,11 +122,12 @@ const Move kBackflip = { .name = "Backflip",
                          .span = 0.7f };
 const Move kBackflipEnd = { "BackflipEnd", GEN(Flip), GEN_SWORDS(Flip), Mode::Sync, 9, 10 };
 // jumping and falling (landings are the end of the fighter's drop-from-the-ceiling animation)
-const Move kAirborne = { "Airborne", GEN(Air), nullptr, Mode::Pose, 0 };                 // knees drawn up, arms out
-const Move kLand = { "Land", GEN(Jump), GEN_SWORDS(Jump), Mode::Sync, 1, 16 };           // after a long drop, standing
-const Move kLandShort = { "LandShort", GEN(Jump), GEN_SWORDS(Jump), Mode::Sync, 5, 16 }; // after a hop
+const Move kAirborne = { "Airborne", GEN(Air), nullptr, Mode::Pose, 0 };       // knees drawn up, arms out
+const Move kLand = { "Land", GEN(Jump), GEN_SWORDS(Jump), Mode::Sync, 1, 16 }; // after a long drop, standing
+// (the fighter's landing ends by raising her arms into her stance, frames 12-16: only the long landing keeps it)
+const Move kLandShort = { "LandShort", GEN(Jump), GEN_SWORDS(Jump), Mode::Sync, 5, 11 }; // after a hop
 // after a long drop, moving on: a quick dip, then her walk/run takes over (Link rolls)
-const Move kLandQuick = { "LandQuick", GEN(Jump), GEN_SWORDS(Jump), Mode::Once, 4, 14, 2.0f };
+const Move kLandQuick = { "LandQuick", GEN(Jump), GEN_SWORDS(Jump), Mode::Once, 4, 11, 2.0f };
 constexpr s32 kLandQuickFrames = 5;
 constexpr f32 kLongDrop = 80.0f; // Link's own threshold: shorter drops have no landing
 // getting hurt
@@ -279,7 +268,6 @@ s32 sLinkStalledFrames = 0;
 s32 sLandingFrames = 0; // remaining frames of a quick landing
 bool sInAir = false;
 f32 sAirPeakY = 0.0f;    // highest point since leaving the ground
-s32 sIdleFrames = 0;     // frames standing still empty-handed
 std::string sForcedName; // test harness: show one animation frame instead of mirroring Link
 f32 sForcedFrame = 0.0f;
 f32 sForcedSwordsFrame = -1.0f;
@@ -389,6 +377,12 @@ bool SetMove(Layer& layer, const Move* move) {
     layer.onceFrame = move->start;
     layer.move = move;
     return true;
+}
+
+// a Once move has reached its last frame
+bool OnceDone(const Layer& layer) {
+    f32 end = EndFrame(layer.move);
+    return (end >= layer.move->start) ? layer.onceFrame >= end : layer.onceFrame <= end;
 }
 
 // fraction [0, 1] of Link's current animation that has played
@@ -667,22 +661,15 @@ void Nabooru_OnPlayerUpdate() {
         sMask = Mask::Legs;
     }
 
-    // Standing still empty-handed for a moment, she folds her arms.
+    // Standing still empty-handed, she folds her arms.
     if (body == &kIdle && overlay == nullptr && HasAnimation(kFoldArms.anim) && HasAnimation(kCrossedArms.anim)) {
-        if (++sIdleFrames > kFoldArmsDelay) {
-            bool folded =
-                sBody.move == &kCrossedArms || (sBody.move == &kFoldArms && sBody.onceFrame >= EndFrame(&kFoldArms));
-            body = folded ? &kCrossedArms : &kFoldArms;
-        }
-    } else {
-        sIdleFrames = 0;
+        bool folded = sBody.move == &kCrossedArms || (sBody.move == &kFoldArms && OnceDone(sBody));
+        body = folded ? &kCrossedArms : &kFoldArms;
     }
 
-    // The fighter's moves end in her fighting stance; with empty hands, let her arms come down at the end.
+    // The fighter's moves end in her fighting stance; with empty hands, let her arms come down once she's landed.
     if (!sShowSwords && overlay == nullptr && HasAnimation(kIdle.anim)) {
-        bool late = (body == &kBackflip && sBody.move == &kBackflip && sBody.skel.curFrame >= 6.0f) ||
-                    body == &kBackflipEnd ||
-                    ((body == &kLand || body == &kLandShort) && sBody.move == body && sBody.skel.curFrame >= 9.0f);
+        bool late = body == &kBackflipEnd || (body == &kLand && sBody.move == body && sBody.skel.curFrame >= 9.0f);
         if (late) {
             overlay = &kIdle;
             sMask = Mask::Arms;

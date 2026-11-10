@@ -12,6 +12,8 @@ the limb they wrap. Every generated animation is checked: each mapped joint must
 usage: build_nabooru_assets.py --out play_as_nabooru.o2r [--decomp ~/oot] [--version pal-1.0] [--debug-c DIR]
 """
 import argparse
+import itertools
+import re
 import math
 import struct
 import sys
@@ -445,35 +447,69 @@ def make_run_back(run, nb_limbs, lean):
     return out
 
 
-def tilt_sword(swords, table, nb_limbs, joint, axis, degrees):
-    """Rotate one scimitar (1 = left hand, 2 = right) about a model-space axis through her hand."""
-    hand = 10 if joint == 1 else 13
-    out = swords.copy()
-    half = math.radians(degrees) / 2
-    R = rot_from_quat(np.concatenate([[math.cos(half)], np.asarray(axis, float) / np.linalg.norm(axis) * math.sin(half)]))
-    for f in range(len(out)):
-        W, _ = fk(nb_limbs, table[f])
-        out[f, joint] = zyx_from_rot(W[hand].T @ R @ W[hand] @ rot_zyx(swords[f, joint]))
-    return out
+# The fighter's scimitars never move relative to her hands (every frame of every fighter animation): her grip is
+# fixed, and where a blade points is down to her wrist and arm. Poses with blades are checked against her mesh.
+SWORD_VTX = {1: ("object_geldb", "object_geldb_Vtx_0078A8"), 2: ("object_geldb", "object_geldb_Vtx_007CF8")}
+SWORD_HAND = {1: 10, 2: 13}
+SWORD_ARM = {1: NB_L_ARM, 2: NB_R_ARM}
+BODY_BOX_SCALE = 0.85  # each limb's mesh is approximated by its bounding box, a little shrunk
 
 
-SCIMITAR_BLADE = np.array([-0.25, -1.0, 0.0])  # blade direction in the scimitar's own frame (tip at -882, -3350)
-CARRY_BLADE = np.array([0.3, -0.45, 0.85])  # left blade in model space: forward, down, a little outward (+X = her left)
+def read_vtx(obj, name):
+    text = (ootanim.ASSETS / obj / f"{name}.inc.c").read_text()
+    return np.array([[int(v, 0) for v in m] for m in re.findall(r"VTX\(\s*(-?\w+),\s*(-?\w+),\s*(-?\w+)", text)], float)
 
 
-def carry_swords(base_frame, nb_limbs, sword_tables):
-    """How she holds the scimitars with her arms down (running, walking): of all the ways the fighter grips them
-    (every frame of every fighter animation, relative to her hand), the one that points each blade closest to
-    forward and down, clear of her legs."""
-    W, _ = fk(nb_limbs, base_frame)
-    blade = SCIMITAR_BLADE / np.linalg.norm(SCIMITAR_BLADE)
-    out = np.zeros((1, 3, 3), int)
-    for joint, hand, side in ((1, 10, 1.0), (2, 13, -1.0)):
-        target = CARRY_BLADE * np.array([side, 1, 1])
-        target /= np.linalg.norm(target)
-        grips = [frame[joint] for table in sword_tables.values() for frame in table]
-        out[0, joint] = max(grips, key=lambda g: float((W[hand] @ rot_zyx(g) @ blade) @ target))
-    return out
+class BladeClearance:
+    """Counts points of her scimitars inside her body (other than the arm holding each one)."""
+
+    def __init__(self, nb_limbs):
+        self.limbs = nb_limbs
+        self.boxes = {}
+        for i, limb in enumerate(nb_limbs):
+            vtx = ootanim.ASSETS / "object_nb" / f"{limb.name[: -len('Limb')]}Vtx.inc.c"
+            if vtx.exists():
+                v = read_vtx("object_nb", vtx.name[: -len(".inc.c")])
+                self.boxes[i] = ((v.min(0) + v.max(0)) / 2, (v.max(0) - v.min(0)) / 2 * BODY_BOX_SCALE)
+        self.blades = {}
+        for j, (obj, name) in SWORD_VTX.items():
+            v = read_vtx(obj, name)
+            pts = [v] + [(v[a] * (1 - t) + v[b] * t)[None] for a, b in itertools.combinations(range(len(v)), 2)
+                         if np.linalg.norm(v[a] - v[b]) < 1500 for t in (0.25, 0.5, 0.75)]
+            self.blades[j] = np.vstack(pts)
+
+    def count(self, frame, swords=None):
+        W, P = fk(self.limbs, frame)
+        n = 0
+        for j, hand in SWORD_HAND.items():
+            grip = rot_zyx(swords[j]) if swords is not None else np.eye(3)
+            pts = P[hand] + (W[hand] @ grip @ self.blades[j].T).T
+            for i, (center, half) in self.boxes.items():
+                if i not in SWORD_ARM[j]:
+                    local = (W[i].T @ (pts - P[i]).T).T
+                    n += int(np.all(np.abs(local - center) < half, axis=1).sum())
+        return n
+
+
+def hold_blades(frame, nb_limbs, arms):
+    """Arms posed to point the blades: per side (1 left, 2 right) the arm swung out from her side, the elbow bent
+    forward, the forearm twisted and the wrist turned (degrees). Found by searching for blades pointing where wanted
+    without touching her."""
+    f = frame.copy()
+    for j, (out, elbow, twist, wrist) in arms.items():
+        upper, fore, hand = SWORD_ARM[j]
+        side = 1 if j == 1 else -1
+        rotate_world(f, nb_limbs, upper, Z_AXIS, side * out)
+        rotate_world(f, nb_limbs, fore, X_AXIS, -elbow)
+        f[fore + 1] = zyx_from_rot(rot_zyx(f[fore + 1]) @ rot_zyx((int(side * twist * 182), 0, 0)))
+        f[hand + 1] = zyx_from_rot(rot_zyx(f[hand + 1]) @ rot_zyx(tuple(int(v * 182) for v in wrist)))
+    return f
+
+
+# standing: blades hanging down and a little forward; walking: down; running: arms out, blades trailing
+HOLD_IDLE = {1: (0, 40, 120, (0, 0, 30)), 2: (0, 40, 120, (-30, 30, 30))}
+HOLD_WALK = {1: (10, 40, 120, (0, 0, 30)), 2: (0, 40, 150, (0, 0, 30))}
+HOLD_RUN = {1: (30, 0, 60, (30, -30, 30)), 2: (30, 20, 90, (-30, 30, 30))}
 
 
 # Left/right limb pairs, and the reflection that maps each limb's local frame onto its mirror image's.
@@ -652,19 +688,16 @@ def main():
     relaxed = make_relaxed(tables["gPlayAsNabooruStandAnim"], nb_walk.table, nb_limbs)
     add("Relaxed", relaxed, "her stance with relaxed, swaying arms")
     add("Tired", make_tired(relaxed[0], nb_limbs), "relaxed stance bent over, breathing hard")
-    resources["objects/object_nb/gPlayAsNabooruCarrySwordsAnim"] = encode_animation(
-        carry_swords(relaxed[0], nb_limbs, sword_tables))
+    # the fighter's grip, for anything without sword data of its own
+    resources["objects/object_nb/gPlayAsNabooruCarrySwordsAnim"] = encode_animation(np.zeros((1, 3, 3), int))
     guard = make_guard(tables["gPlayAsNabooruBlockAnim"], tables["gPlayAsNabooruNeutralAnim"], nb_limbs)
     add("Guard", guard, "crossed-scimitar block standing upright", sword_tables["gPlayAsNabooruBlockAnim"][:1])
 
-    # armed idle: the fighter's standing pose (one blade on her shoulder, one held low), the low blade tilted away
-    # from her body and the high one back from her head so neither cuts through her
+    # with scimitars, standing: her relaxed stance, arms at her sides, blades hanging down
+    clearance = BladeClearance(nb_limbs)
+    armed_idle = np.array([hold_blades(f, nb_limbs, HOLD_IDLE) for f in relaxed])
+    armed_tired = make_tired(armed_idle[0], nb_limbs)
     stand = tables["gPlayAsNabooruStandAnim"]
-    swords = tilt_sword(sword_tables["gPlayAsNabooruStandAnim"], stand, nb_limbs, 2, X_AXIS, 60)
-    swords = tilt_sword(swords, stand, nb_limbs, 1, X_AXIS, -15)
-    add("ArmedIdle", stand, "stance with scimitars, blades clear of her body", swords)
-    add("ArmedTired", make_tired(stand[0], nb_limbs), "armed stance bent over, breathing hard", swords[:1])
-
     # empty-handed idle: she folds her arms (the white-clothed Gerudo's unused motion) and keeps them folded
     stand0 = stand[0]
     add("CrossedArms", make_crossed(tables["gPlayAsNabooruWhiteIdleAnim"][0], stand0, nb_limbs),
@@ -677,12 +710,16 @@ def main():
     lean = forward_lean(nb_limbs, run) - forward_lean(nb_limbs, nb_walk.table) + 4.0
     add("RunBack", make_run_back(run, nb_limbs, lean), f"run leaning back {lean:.1f} degrees, for running backwards")
 
-    # moving with scimitars out: her legs walk/run, her arms hold the blades as in her fighting stance
-    ready_arms = tables["gPlayAsNabooruNeutralAnim"][0]
-    ready_swords = sword_tables["gPlayAsNabooruNeutralAnim"][:1]
-    run_back = make_run_back(run, nb_limbs, lean)
-    for name, table in (("ArmedRun", run), ("ArmedRunBack", run_back), ("ArmedWalk", nb_walk.table)):
-        add(name, np.array([with_arms(f, ready_arms) for f in table]), "with scimitars held ready", ready_swords)
+    # moving with scimitars out: her own walk/run arm swing, wrists turned to keep the blades off her body
+    armed = {"ArmedIdle": armed_idle, "ArmedTired": armed_tired,
+             "ArmedWalk": np.array([hold_blades(f, nb_limbs, HOLD_WALK) for f in nb_walk.table]),
+             "ArmedRun": np.array([hold_blades(f, nb_limbs, HOLD_RUN) for f in run]),
+             "ArmedRunBack": np.array([hold_blades(f, nb_limbs, HOLD_RUN) for f in make_run_back(run, nb_limbs, lean)])}
+    for name, table in armed.items():
+        clipping = sum(clearance.count(f) for f in table)
+        if clipping:
+            sys.exit(f"{name}: scimitars cut through her body ({clipping} points)")
+        add(name, table, "with scimitars, blades clear of her body")
 
     reflections = choose_reflections(nb_limbs, nb_walk.table)
     side = tables["gPlayAsNabooruSidestepAnim"]
