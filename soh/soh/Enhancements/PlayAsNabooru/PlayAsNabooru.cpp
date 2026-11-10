@@ -735,11 +735,14 @@ void Nabooru_OnPlayerUpdate() {
 struct VoiceSwap {
     u16 link;
     u16 hers;
+    // Link's shouts double as his grunt for rolls, hops, jumps, throws and lifts; she only shouts when she attacks and
+    // is silent for the rest
+    bool attackOnly = false;
 };
 
 const VoiceSwap kVoiceSwaps[] = {
-    { NA_SE_VO_LI_SWORD_N, NA_SE_EN_GERUDOFT_ATTACK },       // slashes and jumps
-    { NA_SE_VO_LI_SWORD_L, NA_SE_EN_GERUDOFT_ATTACK },       // strong slashes, spin and jump attacks
+    { NA_SE_VO_LI_SWORD_N, NA_SE_EN_GERUDOFT_ATTACK, true },  // slashes
+    { NA_SE_VO_LI_SWORD_L, NA_SE_EN_GERUDOFT_ATTACK, true },  // strong slashes, spin and jump attacks
     { NA_SE_VO_LI_DAMAGE_S, NA_SE_EN_GERUDOFT_DAMAGE },      // hit
     { NA_SE_VO_LI_LAND_DAMAGE_S, NA_SE_EN_GERUDOFT_DAMAGE }, // hurt by a long fall
     { NA_SE_VO_LI_DOWN, NA_SE_EN_GERUDOFT_DEAD },            // dying
@@ -765,20 +768,61 @@ bool IsDarkLink(const Vec3f* pos) {
     return false;
 }
 
-// Some sounds are played with SFX_FLAG cleared (repeated every frame, e.g. the scream while electrocuted); keep that.
-void SwapVoice(u16* sfxId, const Vec3f* pos) {
-    u16 id = *sfxId | SFX_FLAG;
-    if (SFX_BANK_MASK(id) != SFX_BANK_MASK(NA_SE_VO_LI_SWORD_N)) {
-        return;
+bool IsLinkVoice(u16 sfxId) {
+    u16 id = sfxId | SFX_FLAG;
+    return id >= NA_SE_VO_LI_SWORD_N && id <= NA_SE_VO_LI_ELECTRIC_SHOCK_LV;
+}
+
+// Link's attack animations are all named "...kiru..." (cut) or "hammer..."
+bool IsAttacking(Player* player) {
+    const char* name = LinkAnimName(player->skelAnime.animation);
+    return name != nullptr && (strstr(name, "kiru") != nullptr || strstr(name, "hammer") != nullptr);
+}
+
+// Link has a single voice channel: a new line cuts the one playing unless that one is more important (a hit plays his
+// fall scream and then his hurt grunt in the same frame; only the grunt is heard). Her clips are in other sound banks,
+// so that is done by hand.
+struct {
+    u16 id; // as played, after the swap
+    u8 importance;
+    u32 frame;
+} sLastVoice = {};
+
+// Returns false to silence the sound. Some sounds are played with SFX_FLAG cleared (repeated every frame, e.g. the
+// scream while electrocuted); that is kept.
+bool SwapVoice(u16* sfxId, Vec3f* pos) {
+    if (!IsLinkVoice(*sfxId) || IsDarkLink(pos)) {
+        return true;
     }
+    Player* player = (gPlayState != nullptr) ? GET_PLAYER(gPlayState) : nullptr;
+    bool fromHer = player != nullptr && pos == &player->actor.projectedPos;
+    u16 link = *sfxId;
+    u16 id = *sfxId | SFX_FLAG;
     for (const VoiceSwap& swap : kVoiceSwaps) {
         if (id == swap.link) {
-            if (!IsDarkLink(pos)) {
-                *sfxId = (swap.hers & ~SFX_FLAG) | (*sfxId & SFX_FLAG);
+            // (Link's last blow on Ganon is played centered)
+            if (swap.attackOnly && fromHer && !IsAttacking(player)) {
+                return false;
             }
-            return;
+            *sfxId = (swap.hers & ~SFX_FLAG) | (*sfxId & SFX_FLAG);
+            break;
         }
     }
+    if (!fromHer) {
+        return true;
+    }
+
+    u8 importance = gSoundParams[SFX_BANK_SHIFT(link)][SFX_INDEX(link)].importance;
+    u32 frame = gPlayState->gameplayFrames;
+    if (sLastVoice.id != 0 && sLastVoice.id != *sfxId &&
+        (sLastVoice.frame == frame || Audio_IsSfxPlaying(sLastVoice.id))) {
+        if (importance < sLastVoice.importance) {
+            return false;
+        }
+        Audio_StopSfxByPosAndId(pos, sLastVoice.id);
+    }
+    sLastVoice = { *sfxId, importance, frame };
+    return true;
 }
 
 void Nabooru_OnPlayerDraw(bool isFirstPerson) {
@@ -815,7 +859,7 @@ void RegisterPlayAsNabooru() {
     COND_VB_SHOULD(VB_PLAY_SFX, enabled, {
         u16* sfxId = va_arg(args, u16*);
         Vec3f* pos = va_arg(args, Vec3f*);
-        SwapVoice(sfxId, pos);
+        *should = SwapVoice(sfxId, pos);
     });
 }
 

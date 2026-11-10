@@ -13,6 +13,7 @@
 //   shot NAME                 screenshot (gameplay pauses until it's taken)
 //   log on|off                per-frame log to <out>/log.txt (also the player's voice sounds: "sfx ID")
 //   mark TEXT                 write TEXT into the log
+//   knock TYPE                knock the player back the way enemies do (1 small, 2 large), with Link's voice lines
 //   hit TYPE                  hit the player (0 light, 1 knockdown, 2 small knockback, 3 frozen, 4 shock)
 //   health N                  set health in 1/16 hearts
 //   yaw DEG                   turn the player to face DEG (0 = +Z)
@@ -60,6 +61,7 @@ enum class Kind {
     Log,
     Mark,
     Hit,
+    Knock,
     Health,
     Yaw,
     Face,
@@ -162,8 +164,9 @@ void LoadScript(const char* path) {
         } else if (cmd == "mark") {
             step.kind = Kind::Mark;
             std::getline(in, step.text);
-        } else if (cmd == "hit" || cmd == "health" || cmd == "yaw" || cmd == "face") {
+        } else if (cmd == "hit" || cmd == "knock" || cmd == "health" || cmd == "yaw" || cmd == "face") {
             step.kind = (cmd == "hit")      ? Kind::Hit
+                        : (cmd == "knock")  ? Kind::Knock
                         : (cmd == "health") ? Kind::Health
                         : (cmd == "yaw")    ? Kind::Yaw
                                             : Kind::Face;
@@ -234,6 +237,24 @@ void LogFrame() {
             sqrtf(SQ(player->actor.world.pos.x - sLastPos.x) + SQ(player->actor.world.pos.z - sLastPos.z)),
             player->fallDistance);
     sLastPos = player->actor.world.pos;
+
+    // which of the voice clips are sounding (logged when that changes)
+    static const u16 kVoices[] = { NA_SE_EN_GERUDOFT_ATTACK, NA_SE_EN_GERUDOFT_DAMAGE, NA_SE_EN_GERUDOFT_DEAD,
+                                   NA_SE_VO_NB_AGONY,        NA_SE_VO_NB_CRY_0,         NA_SE_VO_LI_SWORD_N,
+                                   NA_SE_VO_LI_DAMAGE_S,     NA_SE_VO_LI_FALL_L };
+    static std::string sPlaying;
+    std::string playing;
+    for (u16 id : kVoices) {
+        if (Audio_IsSfxPlaying(id)) {
+            char text[8];
+            snprintf(text, sizeof(text), " %04X", id);
+            playing += text;
+        }
+    }
+    if (playing != sPlaying) {
+        fprintf(sLog, "%5d playing:%s\n", sFrame, playing.empty() ? " -" : playing.c_str());
+        sPlaying = playing;
+    }
     fflush(sLog);
 }
 
@@ -252,13 +273,13 @@ bool PlayerReady() {
 
 // Logs the voice (and enemy-bank) sounds coming from the player, after any mod swapped them: registered on the first
 // frame, after the mods' own hooks.
-void LogPlayerSfx(u16 sfxId, const Vec3f* pos) {
+void LogPlayerSfx(u16 sfxId, const Vec3f* pos, bool played) {
     Player* player = GetPlayer();
     if (sLog == nullptr || !sLogging || player == nullptr || pos != &player->actor.projectedPos) {
         return;
     }
     if (SFX_BANK_SHIFT(sfxId) == 6 || SFX_BANK_SHIFT(sfxId) == 3) {
-        fprintf(sLog, "%5d sfx %04X\n", sFrame, sfxId);
+        fprintf(sLog, "%5d sfx %04X%s\n", sFrame, sfxId, played ? "" : " (silenced)");
     }
 }
 
@@ -273,7 +294,7 @@ void OnFrameStart() {
         REGISTER_VB_SHOULD(VB_PLAY_SFX, {
             u16* sfxId = va_arg(args, u16*);
             Vec3f* pos = va_arg(args, Vec3f*);
-            LogPlayerSfx(*sfxId, pos);
+            LogPlayerSfx(*sfxId, pos, *should);
         });
     }
     sFrame++;
@@ -338,6 +359,12 @@ void OnFrameStart() {
             case Kind::Hit:
                 if (player) {
                     func_80837C0C(gPlayState, player, (s32)step.values[0], 4.0f, 5.0f, player->actor.shape.rot.y, 20);
+                }
+                break;
+            case Kind::Knock:
+                if (player) {
+                    Actor_SetPlayerKnockback(gPlayState, &player->actor, 8.0f, player->actor.shape.rot.y + 0x8000, 8.0f,
+                                             (u32)step.values[0], 0);
                 }
                 break;
             case Kind::Health:
