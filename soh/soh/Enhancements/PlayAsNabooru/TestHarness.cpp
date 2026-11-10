@@ -16,6 +16,7 @@
 //   hit TYPE                  hit the player (0 light, 1 knockdown, 2 small knockback, 3 frozen, 4 shock)
 //   health N                  set health in 1/16 hearts
 //   yaw DEG                   turn the player to face DEG (0 = +Z)
+//   face DEG                  turn the player DEG away from facing the camera (0 = facing it, 90 = her left side)
 //   pos X Y Z                 teleport the player
 //   save | restore            remember the player's position and facing | go back there
 //   rise DY                   move the player up by DY (she falls back down)
@@ -52,7 +53,25 @@ void PlayAsNabooru_DebugForce(const char* name, float frame, const char* swords,
 
 namespace {
 
-enum class Kind { WaitPlay, Hold, Shot, Log, Mark, Hit, Health, Yaw, Pos, CVar, Pose, Warp, Rise, Save, Restore, Done };
+enum class Kind {
+    WaitPlay,
+    Hold,
+    Shot,
+    Log,
+    Mark,
+    Hit,
+    Health,
+    Yaw,
+    Face,
+    Pos,
+    CVar,
+    Pose,
+    Warp,
+    Rise,
+    Save,
+    Restore,
+    Done
+};
 
 struct Step {
     Kind kind;
@@ -143,8 +162,11 @@ void LoadScript(const char* path) {
         } else if (cmd == "mark") {
             step.kind = Kind::Mark;
             std::getline(in, step.text);
-        } else if (cmd == "hit" || cmd == "health" || cmd == "yaw") {
-            step.kind = (cmd == "hit") ? Kind::Hit : (cmd == "health") ? Kind::Health : Kind::Yaw;
+        } else if (cmd == "hit" || cmd == "health" || cmd == "yaw" || cmd == "face") {
+            step.kind = (cmd == "hit")      ? Kind::Hit
+                        : (cmd == "health") ? Kind::Health
+                        : (cmd == "yaw")    ? Kind::Yaw
+                                            : Kind::Face;
             in >> step.values[0];
         } else if (cmd == "save" || cmd == "restore") {
             step.kind = (cmd == "save") ? Kind::Save : Kind::Restore;
@@ -204,12 +226,13 @@ void LogFrame() {
     SkelAnime* upper = &player->upperSkelAnime;
     fprintf(sLog,
             "%5d step%-3zu link %-34s %5.1f/%5.1f up %-26s %5.1f | nb %-22s %5.1f | y %7.1f vy %5.1f spd %5.1f "
-            "st1 %08X st2 %08X bg %04X face %04X dir %04X mv %4.1f\n",
+            "st1 %08X st2 %08X bg %04X face %04X dir %04X mv %4.1f fall %d\n",
             sFrame, sStepIndex, ShortAnimName(link->animation), link->curFrame, link->endFrame,
             ShortAnimName(upper->animation), upper->curFrame, move, moveFrame, player->actor.world.pos.y,
             player->actor.velocity.y, player->actor.speedXZ, player->stateFlags1, player->stateFlags2,
             player->actor.bgCheckFlags, (u16)player->actor.shape.rot.y, (u16)player->actor.world.rot.y,
-            sqrtf(SQ(player->actor.world.pos.x - sLastPos.x) + SQ(player->actor.world.pos.z - sLastPos.z)));
+            sqrtf(SQ(player->actor.world.pos.x - sLastPos.x) + SQ(player->actor.world.pos.z - sLastPos.z)),
+            player->fallDistance);
     sLastPos = player->actor.world.pos;
     fflush(sLog);
 }
@@ -303,6 +326,13 @@ void OnFrameStart() {
                 if (player) {
                     player->actor.shape.rot.y = player->actor.world.rot.y = player->yaw =
                         (s16)(step.values[0] * 0x8000 / 180.0f);
+                }
+                break;
+            case Kind::Face:
+                if (player) {
+                    s16 yaw = Math_Vec3f_Yaw(&player->actor.world.pos, &GET_ACTIVE_CAM(gPlayState)->eye) +
+                              (s16)(step.values[0] * 0x8000 / 180.0f);
+                    player->actor.shape.rot.y = player->actor.world.rot.y = player->yaw = yaw;
                 }
                 break;
             case Kind::Pos:

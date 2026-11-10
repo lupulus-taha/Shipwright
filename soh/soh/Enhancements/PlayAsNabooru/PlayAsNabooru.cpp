@@ -76,23 +76,34 @@ constexpr f32 kJumpSlashLift = 2000.0f;
 
 // locomotion and idles
 const Move kHips = { "Hips", gNabooruStandingHandsOnHipsAnim, nullptr, Mode::Loop };
-const Move kIdle = { "Idle", GEN(Relaxed), nullptr, Mode::Loop }; // empty-handed
-// with scimitars: her relaxed stance, blades hanging along her legs
-#define IDLE_SWORDS GEN_SWORDS(Resting)
-constexpr f32 kIdleSwordsFrame = 0.0f;
-const Move kIdleSwords = { .name = "IdleSwords",
-                           .anim = GEN(Relaxed),
-                           .swords = IDLE_SWORDS,
-                           .mode = Mode::Loop,
-                           .swordsFrame = kIdleSwordsFrame };
+// empty-handed: arms at her sides; after a moment she folds her arms (the white-clothed Gerudo's motion)
+const Move kIdle = { "Idle", GEN(Relaxed), nullptr, Mode::Loop };
+const Move kFoldArms = { "FoldArms", GEN(FoldArms), nullptr, Mode::Once, 0, -1, 0.5f };
+const Move kCrossedArms = { "CrossedArms", GEN(CrossedArms), nullptr, Mode::Loop };
+constexpr s32 kFoldArmsDelay = 30; // frames of standing still before she folds her arms
+// with scimitars: the fighter's stance, one blade on her shoulder and one held low
+const Move kIdleSwords = { "IdleSwords", GEN(ArmedIdle), GEN_SWORDS(ArmedIdle), Mode::Loop };
 const Move kTired = { "Tired", GEN(Tired), nullptr, Mode::Loop };
 const Move kTiredSwords = { .name = "TiredSwords",
-                            .anim = GEN(Tired),
-                            .swords = IDLE_SWORDS,
+                            .anim = GEN(ArmedTired),
+                            .swords = GEN_SWORDS(ArmedTired),
                             .mode = Mode::Loop,
-                            .swordsFrame = kIdleSwordsFrame };
+                            .swordsFrame = 0 };
 const Move kWalk = { "Walk", gNabooruWalkingAnim, nullptr, Mode::Loop };
 const Move kRun = { "Run", GEN(Run), nullptr, Mode::Loop };
+const Move kRunBack = { "RunBack", GEN(RunBack), nullptr, Mode::Loop }; // upright; played backwards
+// with scimitars out, her arms hold them as in her fighting stance
+const Move kArmedWalk = {
+    .name = "ArmedWalk", .anim = GEN(ArmedWalk), .swords = GEN_SWORDS(ArmedWalk), .mode = Mode::Loop, .swordsFrame = 0
+};
+const Move kArmedRun = {
+    .name = "ArmedRun", .anim = GEN(ArmedRun), .swords = GEN_SWORDS(ArmedRun), .mode = Mode::Loop, .swordsFrame = 0
+};
+const Move kArmedRunBack = { .name = "ArmedRunBack",
+                             .anim = GEN(ArmedRunBack),
+                             .swords = GEN_SWORDS(ArmedRunBack),
+                             .mode = Mode::Loop,
+                             .swordsFrame = 0 };
 const Move kStance = { "Stance", GEN(Neutral), GEN_SWORDS(Neutral), Mode::Loop };
 const Move kFightWalk = { "FightWalk", GEN(FightWalk), GEN_SWORDS(FightWalk), Mode::Loop };
 const Move kStrafe = { "Strafe", GEN(Sidestep), GEN_SWORDS(Sidestep), Mode::Loop };
@@ -123,13 +134,13 @@ const Move kBackflip = { .name = "Backflip",
                          .span = 0.7f };
 const Move kBackflipEnd = { "BackflipEnd", GEN(Flip), GEN_SWORDS(Flip), Mode::Sync, 9, 10 };
 // jumping and falling (landings are the end of the fighter's drop-from-the-ceiling animation)
-// in the air: the flight phase of her run
-const Move kAirborne = { "Airborne", GEN(Run), nullptr, Mode::Pose, 3 };
-const Move kLand = { "Land", GEN(Jump), GEN_SWORDS(Jump), Mode::Sync, 1, 16 };
-const Move kLandShort = { "LandShort", GEN(Jump), GEN_SWORDS(Jump), Mode::Sync, 5, 16 };
-// touching down while moving on: a quick dip, then her walk/run takes over
+const Move kAirborne = { "Airborne", GEN(Air), nullptr, Mode::Pose, 0 };                 // knees drawn up, arms out
+const Move kLand = { "Land", GEN(Jump), GEN_SWORDS(Jump), Mode::Sync, 1, 16 };           // after a long drop, standing
+const Move kLandShort = { "LandShort", GEN(Jump), GEN_SWORDS(Jump), Mode::Sync, 5, 16 }; // after a hop
+// after a long drop, moving on: a quick dip, then her walk/run takes over (Link rolls)
 const Move kLandQuick = { "LandQuick", GEN(Jump), GEN_SWORDS(Jump), Mode::Once, 4, 14, 2.0f };
 constexpr s32 kLandQuickFrames = 5;
+constexpr f32 kLongDrop = 80.0f; // Link's own threshold: shorter drops have no landing
 // getting hurt
 const Move kDamage = {
     "Damage", GEN(Damage), GEN_SWORDS(Damage), Mode::Sync, 0, 7
@@ -139,7 +150,7 @@ const Move kDown = { "Down", GEN(Defeat), GEN_SWORDS(Defeat), Mode::Sync, 12, 22
 const Move kGetUp = { "GetUp", GEN(Crouch), nullptr, Mode::Once, 10, 0, 0.6f };
 const Move kDeath = { "Death", GEN(Faint), nullptr, Mode::Once, 0, -1, 1.0f };
 // how she holds the scimitars when the current animation has no sword data (e.g. running with swords drawn)
-const char* const kDefaultSwords = GEN_SWORDS(Resting);
+const char* const kDefaultSwords = GEN_SWORDS(Carry);
 
 // Rules are checked in order against Link's animation name (after "gPlayerAnim_link_"); the first rule with a
 // matching substring wins. A null move means "Link-only, not implemented": use the locomotion fallback.
@@ -149,7 +160,8 @@ struct Rule {
 };
 
 const std::vector<Rule> kRules = {
-    { { "climb", "water_fall", "uma_", "swimer_", "step_up", "landing_roll" }, nullptr },
+    // "250jump" is the jump up to a ledge; "landing_roll" and "short_landing" are handled by her own landing logic
+    { { "climb", "water_fall", "uma_", "swimer_", "step_up", "250jump", "landing_roll", "short_landing" }, nullptr },
     { { "power_kiru_start" }, &kSpinWindup },
     { { "power_kiru" }, &kSpinCharge }, // holding a charged spin, also while walking
     { { "rolling_kiru_end", "rollkiru_end" }, &kSpinEnd },
@@ -175,9 +187,7 @@ const std::vector<Rule> kRules = {
     { { "_downB", "hip_down" }, &kDown },
     { { "_downA", "ice_down" }, &kKnockdown },
     { { "_hit", "_shit", "damage" }, &kDamage },
-    { { "250jump" }, &kAirborne }, // jumping up to grab a ledge
-    // Link's "landing" animations are his fall; "short_landing" is the touchdown
-    { { "short_landing" }, &kLand },
+    // Link's "normal_landing" is his fall, and also his touchdown after a long drop (see Nabooru_OnPlayerUpdate)
     { { "run_jump_end", "front_jump_end", "anchor_landing" }, &kLandShort },
     { { "landing", "normal_jump", "run_jump", "front_jump" }, &kAirborne },
     { { "talk" }, &kHips },
@@ -239,7 +249,7 @@ constexpr f32 kStrafeReferenceSpeed = 2.5f;
 constexpr f32 kMovingThreshold = 0.5f;
 constexpr f32 kRunThreshold = 4.5f;
 constexpr f32 kAttackStepThreshold = 1.0f; // Link's attacks slide him; above this, her legs step along
-constexpr f32 kMorphFrames = -4.0f;
+constexpr f32 kCrossfadeStep = 0.2f;       // a new move blends in over 5 frames
 constexpr f32 kLayerFadeStep = 0.25f;
 
 struct Layer {
@@ -258,13 +268,18 @@ Layer sOverlay; // drives part of the body (sMask), faded in/out by sOverlayWeig
 Mask sMask = Mask::Upper;
 f32 sOverlayWeight = 0.0f;
 Vec3s sFinalJoints[NB_LIMB_MAX];
+Vec3s sFadeFrom[NB_LIMB_MAX]; // her pose when the current move started, blended out over a few frames
+f32 sFadeWeight = 0.0f;
 
 bool sShowSwords = false;
 Vec3f sPrevPos;
 const void* sLinkPrevAnim = nullptr; // Link's animation can stall while he moves (see Nabooru_OnPlayerUpdate)
 f32 sLinkPrevFrame = 0.0f;
 s32 sLinkStalledFrames = 0;
-s32 sLandingFrames = 0;  // remaining frames of a quick landing
+s32 sLandingFrames = 0; // remaining frames of a quick landing
+bool sInAir = false;
+f32 sAirPeakY = 0.0f;    // highest point since leaving the ground
+s32 sIdleFrames = 0;     // frames standing still empty-handed
 std::string sForcedName; // test harness: show one animation frame instead of mirroring Link
 f32 sForcedFrame = 0.0f;
 f32 sForcedSwordsFrame = -1.0f;
@@ -305,6 +320,7 @@ void ReleaseSkeleton() {
     ReleaseLayer(sBody);
     ReleaseLayer(sOverlay);
     sOverlayWeight = 0.0f;
+    sFadeWeight = 0.0f;
 }
 
 f32 LastFrame(const Move* move) {
@@ -315,21 +331,64 @@ f32 EndFrame(const Move* move) {
     return (move->end < 0.0f) ? LastFrame(move) : move->end;
 }
 
-void SetMove(Layer& layer, const Move* move, bool morph) {
+// Joint rotations are blended as quaternions: blending the Euler angles directly can swing a limb the long way
+// round (two animations may describe the same arm pose with very different angles).
+struct Quat {
+    f32 w, x, y, z;
+};
+
+// OoT joint rotations are Rz(z) * Ry(y) * Rx(x)
+Quat ToQuat(const Vec3s& r) {
+    f32 hx = BINANG_TO_RAD(r.x) * 0.5f, hy = BINANG_TO_RAD(r.y) * 0.5f, hz = BINANG_TO_RAD(r.z) * 0.5f;
+    f32 cx = cosf(hx), sx = sinf(hx), cy = cosf(hy), sy = sinf(hy), cz = cosf(hz), sz = sinf(hz);
+    return { cz * cy * cx + sz * sy * sx, cz * cy * sx - sz * sy * cx, cz * sy * cx + sz * cy * sx,
+             sz * cy * cx - cz * sy * sx };
+}
+
+s16 ToBinang(f32 radians) {
+    return (s16)(s32)lroundf(radians * (32768.0f / (f32)M_PI)); // wraps +pi to -pi
+}
+
+Vec3s ToEuler(const Quat& q) {
+    f32 r20 = 2.0f * (q.x * q.z - q.w * q.y);
+    f32 r21 = 2.0f * (q.y * q.z + q.w * q.x);
+    f32 r22 = 1.0f - 2.0f * (q.x * q.x + q.y * q.y);
+    f32 r10 = 2.0f * (q.x * q.y + q.w * q.z);
+    f32 r00 = 1.0f - 2.0f * (q.y * q.y + q.z * q.z);
+    return { ToBinang(atan2f(r21, r22)), ToBinang(asinf(CLAMP(-r20, -1.0f, 1.0f))), ToBinang(atan2f(r10, r00)) };
+}
+
+// joint `a` moved `weight` of the way towards `b`
+void MixRotation(Vec3s& a, const Vec3s& b, f32 weight) {
+    Quat p = ToQuat(a), q = ToQuat(b);
+    f32 sign = (p.w * q.w + p.x * q.x + p.y * q.y + p.z * q.z < 0.0f) ? -1.0f : 1.0f;
+    Quat m = { p.w + (sign * q.w - p.w) * weight, p.x + (sign * q.x - p.x) * weight, p.y + (sign * q.y - p.y) * weight,
+               p.z + (sign * q.z - p.z) * weight };
+    f32 len = sqrtf(m.w * m.w + m.x * m.x + m.y * m.y + m.z * m.z);
+    a = ToEuler({ m.w / len, m.x / len, m.y / len, m.z / len });
+}
+
+void MixTranslation(Vec3s& a, const Vec3s& b, f32 weight) {
+    a.x += (s16)((b.x - a.x) * weight);
+    a.y += (s16)((b.y - a.y) * weight);
+    a.z += (s16)((b.z - a.z) * weight);
+}
+
+// Switches a layer to a move; returns whether it changed. Blending into it is done on her final pose.
+bool SetMove(Layer& layer, const Move* move) {
     if (move == layer.move) {
-        return;
+        return false;
     }
     f32 last = LastFrame(move);
-    f32 morphFrames = (layer.move == nullptr || !morph) ? 0.0f : kMorphFrames;
     if (move->mode == Mode::Loop) {
-        Animation_Change(&layer.skel, (AnimationHeader*)move->anim, 1.0f, 0.0f, last, ANIMMODE_LOOP, morphFrames);
+        Animation_Change(&layer.skel, (AnimationHeader*)move->anim, 1.0f, 0.0f, last, ANIMMODE_LOOP, 0.0f);
     } else {
         // frames are set by hand every update
-        Animation_Change(&layer.skel, (AnimationHeader*)move->anim, 0.0f, move->start, last, ANIMMODE_ONCE,
-                         morphFrames);
+        Animation_Change(&layer.skel, (AnimationHeader*)move->anim, 0.0f, move->start, last, ANIMMODE_ONCE, 0.0f);
     }
     layer.onceFrame = move->start;
     layer.move = move;
+    return true;
 }
 
 // fraction [0, 1] of Link's current animation that has played
@@ -392,9 +451,18 @@ bool IsTargeting(Player* player) {
     return player->stateFlags1 & (PLAYER_STATE1_PARALLEL | PLAYER_STATE1_HOSTILE_LOCK_ON | PLAYER_STATE1_Z_TARGETING);
 }
 
+// her armed version of a move, if she has it
+const Move* Armed(const Move* move) {
+    const Move* armed = (move == &kWalk)      ? &kArmedWalk
+                        : (move == &kRun)     ? &kArmedRun
+                        : (move == &kRunBack) ? &kArmedRunBack
+                                              : nullptr;
+    return (sShowSwords && armed != nullptr && HasAnimation(armed->anim)) ? armed : move;
+}
+
 // Locomotion when no rule matches. Returns the move and its loop speed; `legsOnly` asks for her normal upper body
 // (used when walking sideways without her scimitars, so she doesn't hold a fighting pose with empty hands).
-const Move* Locomotion(Player* player, f32* loopSpeed, bool* legsOnly) {
+const Move* LocomotionMove(Player* player, f32* loopSpeed, bool* legsOnly) {
     f32 speed = player->actor.speedXZ;
     *legsOnly = false;
     *loopSpeed = 1.0f;
@@ -427,9 +495,9 @@ const Move* Locomotion(Player* player, f32* loopSpeed, bool* legsOnly) {
             *loopSpeed = CLAMP(speed / kWalkReferenceSpeed, 0.5f, 3.0f);
             return &kWalk;
         case Dir::Back:
-            if (speed > kRunThreshold && HasAnimation(kRun.anim)) {
+            if (speed > kRunThreshold && HasAnimation(kRunBack.anim)) {
                 *loopSpeed = -CLAMP(speed / kRunReferenceSpeed, 0.75f, 3.0f);
-                return &kRun;
+                return &kRunBack;
             }
             if (sShowSwords && HasAnimation(kFightWalk.anim)) {
                 *loopSpeed = -CLAMP(speed / kFightWalkReferenceSpeed, 0.5f, 2.5f);
@@ -451,6 +519,10 @@ const Move* Locomotion(Player* player, f32* loopSpeed, bool* legsOnly) {
     return &kIdle;
 }
 
+const Move* Locomotion(Player* player, f32* loopSpeed, bool* legsOnly) {
+    return Armed(LocomotionMove(player, loopSpeed, legsOnly));
+}
+
 bool IsAttack(const Move* move) {
     return move == &kSlash || move == &kSlashEnd || move == &kHeavy || move == &kHeavyEnd;
 }
@@ -468,17 +540,31 @@ void UpdateEyes() {
     sEyeIndex = (sBlinkTimer < ARRAY_COUNT(sEyeTextures)) ? sBlinkTimer : 0;
 }
 
+// her final pose: the body, the overlay over its masked joints, and the pose she's blending out of
 void BlendLayers() {
     for (s32 i = 0; i < NB_LIMB_MAX; i++) {
         sFinalJoints[i] = sBody.joints[i];
         if (sOverlayWeight > 0.0f && InMask(sMask, i)) {
-            Vec3s& a = sFinalJoints[i];
-            const Vec3s& b = sOverlay.joints[i];
-            a.x += (s16)((s16)(b.x - a.x) * sOverlayWeight);
-            a.y += (s16)((s16)(b.y - a.y) * sOverlayWeight);
-            a.z += (s16)((s16)(b.z - a.z) * sOverlayWeight);
+            MixRotation(sFinalJoints[i], sOverlay.joints[i], sOverlayWeight);
         }
     }
+    if (sFadeWeight > 0.0f) {
+        MixTranslation(sFinalJoints[0], sFadeFrom[0], sFadeWeight);
+        for (s32 i = 1; i < NB_LIMB_MAX; i++) {
+            MixRotation(sFinalJoints[i], sFadeFrom[i], sFadeWeight);
+        }
+    }
+}
+
+// blend from her current pose into whatever comes next
+void StartCrossfade() {
+    memcpy(sFadeFrom, sFinalJoints, sizeof(sFadeFrom));
+    sFadeWeight = 1.0f;
+}
+
+bool IsLinkTouchdown(const void* anim) {
+    const char* name = LinkAnimName(anim);
+    return name != nullptr && (strcmp(name, "normal_landing") == 0 || strcmp(name, "normal_landing_free") == 0);
 }
 
 void Nabooru_OnPlayerUpdate() {
@@ -496,15 +582,18 @@ void Nabooru_OnPlayerUpdate() {
                   player->leftHandType == PLAYER_MODELTYPE_LH_BGS || player->leftHandType == PLAYER_MODELTYPE_LH_HAMMER;
 
     if (!sForcedName.empty()) {
-        SetMove(sBody, &sForced, false);
+        SetMove(sBody, &sForced);
         StepLayer(sBody, player, 0.0f);
         sOverlayWeight = 0.0f;
+        sFadeWeight = 0.0f;
         BlendLayers();
         return;
     }
 
     f32 stepDistance = sqrtf(SQ(player->actor.world.pos.x - sPrevPos.x) + SQ(player->actor.world.pos.z - sPrevPos.z));
     sPrevPos = player->actor.world.pos;
+    bool grounded = player->actor.bgCheckFlags & BGCHECKFLAG_GROUND;
+    bool moving = player->actor.speedXZ > kMovingThreshold;
 
     // While Z-targeting, Link's walk/run is blended into his skeleton separately: his main animation then stalls on
     // whatever came before (often a slash recovery) while he moves. Treat that as locomotion.
@@ -520,36 +609,41 @@ void Nabooru_OnPlayerUpdate() {
     bool shielding = player->stateFlags1 & PLAYER_STATE1_SHIELDING;
     bool freezeBody = false;
 
-    if (YieldsToLocomotion(body) && sLinkStalledFrames >= 2 && player->actor.speedXZ > kMovingThreshold) {
+    if (YieldsToLocomotion(body) && sLinkStalledFrames >= 2 && moving) {
         body = nullptr;
     }
     if (body == &kAirborne && (sBody.move == &kBackflip || sBody.move == &kJumpSlashAir)) {
         // Link briefly plays his fall between a flip and its landing: finish the flip instead
         body = sBody.move;
         freezeBody = true;
+    } else if (body == &kAirborne && grounded && IsLinkTouchdown(link->animation)) {
+        body = &kLand; // Link's fall animation played on the ground is his landing after a long drop
     }
     if (body == &kTired && sShowSwords) {
         body = &kTiredSwords;
     }
 
-    if (body == nullptr && player->actor.bgCheckFlags & BGCHECKFLAG_GROUND && HasAnimation(kLandQuick.anim)) {
-        // Link lands straight into his run when the stick is held, without a landing of his own
-        bool cutShort = (sBody.move == &kLand || sBody.move == &kLandShort) && sBody.skel.curFrame < 10.0f;
-        if (sBody.move == &kAirborne || cutShort) {
+    // Landing after a long drop while moving on (Link rolls): a quick dip into her walk/run. Short drops have none.
+    if (!grounded) {
+        sAirPeakY = sInAir ? MAX(sAirPeakY, player->actor.world.pos.y) : player->actor.world.pos.y;
+        sInAir = true;
+        sLandingFrames = 0;
+    } else if (sInAir) {
+        sInAir = false;
+        if (sAirPeakY - player->actor.world.pos.y > kLongDrop && moving && HasAnimation(kLandQuick.anim)) {
             sLandingFrames = kLandQuickFrames;
         }
-        if (sLandingFrames > 0) {
-            sLandingFrames--;
-            body = &kLandQuick;
-        }
-    } else {
+    }
+    if (sLandingFrames > 0 && (body == nullptr || body == &kAirborne || body == &kLand)) {
+        sLandingFrames--;
+        body = &kLandQuick;
+    } else if (body != &kLandQuick) {
         sLandingFrames = 0;
     }
 
     if (body == nullptr) {
         bool legsOnly = false;
         body = Locomotion(player, &bodySpeed, &legsOnly);
-        bool moving = player->actor.speedXZ > kMovingThreshold;
         if (shielding && HasAnimation(kBlock.anim)) {
             if (moving) {
                 overlay = &kBlock; // guard up while walking: her arms only, so she still looks ahead
@@ -562,8 +656,8 @@ void Nabooru_OnPlayerUpdate() {
                 sMask = Mask::Upper;
             }
         } else if (legsOnly) {
-            overlay = HasAnimation(kIdle.anim) ? &kIdle
-                                               : &kHips; // empty-handed: her relaxed upper body over the sideways steps
+            // empty-handed: her relaxed upper body over the sideways steps
+            overlay = HasAnimation(kIdle.anim) ? &kIdle : &kHips;
             sMask = Mask::Upper;
         }
     } else if (IsAttack(body) && stepDistance > kAttackStepThreshold && HasAnimation(kFightWalk.anim)) {
@@ -573,7 +667,30 @@ void Nabooru_OnPlayerUpdate() {
         sMask = Mask::Legs;
     }
 
-    SetMove(sBody, body, true);
+    // Standing still empty-handed for a moment, she folds her arms.
+    if (body == &kIdle && overlay == nullptr && HasAnimation(kFoldArms.anim) && HasAnimation(kCrossedArms.anim)) {
+        if (++sIdleFrames > kFoldArmsDelay) {
+            bool folded =
+                sBody.move == &kCrossedArms || (sBody.move == &kFoldArms && sBody.onceFrame >= EndFrame(&kFoldArms));
+            body = folded ? &kCrossedArms : &kFoldArms;
+        }
+    } else {
+        sIdleFrames = 0;
+    }
+
+    // The fighter's moves end in her fighting stance; with empty hands, let her arms come down at the end.
+    if (!sShowSwords && overlay == nullptr && HasAnimation(kIdle.anim)) {
+        bool late = (body == &kBackflip && sBody.move == &kBackflip && sBody.skel.curFrame >= 6.0f) ||
+                    body == &kBackflipEnd ||
+                    ((body == &kLand || body == &kLandShort) && sBody.move == body && sBody.skel.curFrame >= 9.0f);
+        if (late) {
+            overlay = &kIdle;
+            sMask = Mask::Arms;
+        }
+    }
+
+    bool hadMove = sBody.move != nullptr; // nothing to blend from on her first frame
+    bool changed = SetMove(sBody, body) && hadMove;
     if (freezeBody) {
         SkelAnime_Update(&sBody.skel);
     } else {
@@ -581,7 +698,7 @@ void Nabooru_OnPlayerUpdate() {
     }
 
     if (overlay != nullptr) {
-        SetMove(sOverlay, overlay, sOverlayWeight > 0.0f);
+        changed |= SetMove(sOverlay, overlay) && sOverlayWeight > 0.0f;
         sOverlayWeight = MIN(sOverlayWeight + kLayerFadeStep, 1.0f);
     } else {
         sOverlayWeight = MAX(sOverlayWeight - kLayerFadeStep, 0.0f);
@@ -589,6 +706,11 @@ void Nabooru_OnPlayerUpdate() {
     if (sOverlayWeight > 0.0f && sOverlay.move != nullptr) {
         StepLayer(sOverlay, player, overlaySpeed);
     }
+
+    if (changed) {
+        StartCrossfade();
+    }
+    sFadeWeight = MAX(sFadeWeight - kCrossfadeStep, 0.0f);
     BlendLayers();
 }
 

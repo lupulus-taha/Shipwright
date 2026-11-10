@@ -6,6 +6,9 @@ param(
     [Parameter(Mandatory = $true)][string]$Script,
     [Parameter(Mandatory = $true)][string]$Out,
     [int]$Entrance = 0xCD, # Hyrule Field
+    # spawn point: by the wall outside Lon Lon Ranch (room to run, a ledge to climb and drop from, no loading zones)
+    [double[]]$Pos = @(-4862.56, -180.968, 6842.906),
+    [int]$Yaw = -7678,
     [string]$TestHome = "$env:USERPROFILE\oot-fast64\soh_test",
     [string]$Exe = "",
     [string]$Mods = "",
@@ -40,7 +43,7 @@ $config = [ordered]@{
         Width = $Width; Height = $Height; PositionX = 40; PositionY = 40
     }
     WarpPoints    = @{
-        test = @{ entranceId = $Entrance; roomNum = 0; pos = @{ x = 0; y = 0; z = 0 }; rotY = 0; bootToPoint = $true }
+        test = @{ entranceId = $Entrance; roomNum = 0; pos = @{ x = $Pos[0]; y = $Pos[1]; z = $Pos[2] }; rotY = $Yaw; bootToPoint = $true }
     }
 }
 $config | ConvertTo-Json -Depth 6 | Set-Content -Encoding utf8 "$TestHome\shipofharkinian.json"

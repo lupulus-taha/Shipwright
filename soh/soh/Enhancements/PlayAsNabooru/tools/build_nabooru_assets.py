@@ -76,6 +76,13 @@ FIGHTER = Source(
     {1: 16, 2: 17, 3: 18, 4: 19, 5: 20, 6: 21, 7: 1, 8: 11, 9: 12, 10: 13, 11: 6, 12: 7, 13: 8, 14: 2, 16: 3},
 )
 
+# The white-clothed Gerudo (object_ge1) has the same limb order for her first 15 limbs, but her own proportions: only
+# limb rotations carry over (no joint check), and the root height comes from Nabooru's stance.
+WHITE = Source(
+    "object_ge1", "gGerudoWhiteSkel", "GERUDO_WHITE_LIMB_",
+    {**{i: i for i in range(15)}, 15: "static", 16: "static", 17: "static"},
+)
+
 
 @dataclass
 class Job:
@@ -83,6 +90,7 @@ class Job:
     source: Source
     anim: str
     arms_from_walk: bool = False  # replace arms with Nabooru's own (phase-matched, exaggerated) walk swing
+    write: bool = True  # False: only an ingredient of generated animations
 
 
 # Fighter (twin scimitars) sword limbs: each hangs off the wrist next to the hand, with zero offset.
@@ -109,6 +117,9 @@ JOBS = [
     Job("gPlayAsNabooruFaintAnim", GUARD, "gObjectGlaFaintAnim"),
     Job("gPlayAsNabooruCrouchAnim", GUARD, "gObjectGlaKneelAnim"),
     Job("gPlayAsNabooruCrouchingAnim", GUARD, "gObjectGlaKneelingAnim"),
+    # white-clothed Gerudo (unarmed)
+    Job("gPlayAsNabooruWhiteIdleAnim", WHITE, "gGerudoWhiteIdleAnim", write=False),
+    Job("gPlayAsNabooruWhiteFoldArmsAnim", WHITE, "gGerudoWhiteUnusedFoldingArmsAnim", write=False),
 ]
 
 # How much to exaggerate her walk arm swing when running (upper arm, forearm, hand).
@@ -303,6 +314,20 @@ def turn(table_frame, nb_limbs, limb, degrees):
     table_frame[limb + 1] = zyx_from_rot(W[parent].T @ yaw @ W[limb])
 
 
+def rotate_world(table_frame, nb_limbs, limb, axis, degrees):
+    """Rotate `limb` (and everything below it in the hierarchy) about a model-space axis, pivoting at the limb.
+    Model space: +X her left, +Y up, +Z forward."""
+    W, _ = fk(nb_limbs, table_frame)
+    R = rot_from_quat(np.concatenate([[math.cos(math.radians(degrees) / 2)],
+                                      np.asarray(axis, float) / np.linalg.norm(axis) * math.sin(math.radians(degrees) / 2)]))
+    parent = nb_limbs[limb].parent
+    world = R @ W[limb]
+    table_frame[limb + 1] = zyx_from_rot(world if parent < 0 else W[parent].T @ world)
+
+
+X_AXIS, Y_AXIS, Z_AXIS = (1, 0, 0), (0, 1, 0), (0, 0, 1)
+
+
 def make_tired(base_frame, nb_limbs):
     """Critical-health idle: her relaxed stance, bent forward and heaving for breath."""
     out = np.repeat(base_frame[None], TIRED_FRAMES, axis=0).copy()
@@ -347,26 +372,107 @@ def make_guard(block_table, neutral_table, nb_limbs):
     return out
 
 
+NB_LEGS = (1, 2, 3, 4, 5, 6)
+
+
+def mean_frame(table):
+    """Each joint's average rotation over a cycle (root translation from frame 0)."""
+    out = table[0].copy()
+    for j in range(1, table.shape[1]):
+        q = quat_mean([quat_from_rot(rot_zyx(f[j])) for f in table])
+        out[j] = zyx_from_rot(rot_from_quat(q))
+    return out
+
+
+def forward_lean(nb_limbs, table):
+    """Average forward lean (degrees) of the line from her torso joint to her head."""
+    leans = []
+    for f in table:
+        _, P = fk(nb_limbs, f)
+        d = P[NB_HEAD] - P[NB_TORSO]
+        leans.append(math.degrees(math.atan2(d[2], d[1])))
+    return float(np.mean(leans))
+
+
+CROSSED_FRAMES = 80
+CROSSED_BREATH = 1.0  # degrees of torso bend
+CROSSED_LOOK = 9.0  # degrees her head turns either way
+
+
+def with_arms(base_frame, arms_frame):
+    out = base_frame.copy()
+    for limb in NB_L_ARM + NB_R_ARM:
+        out[limb + 1] = arms_frame[limb + 1]
+    return out
+
+
+def make_crossed(white_frame, stand_frame, nb_limbs):
+    """Empty-handed idle: the white-clothed Gerudo's folded arms over Nabooru's stance, breathing and looking around."""
+    base = with_arms(stand_frame, white_frame)
+    out = np.repeat(base[None], CROSSED_FRAMES, axis=0).copy()
+    for i in range(CROSSED_FRAMES):
+        t = i / CROSSED_FRAMES
+        bend_forward(out[i], nb_limbs, NB_TORSO, CROSSED_BREATH * math.sin(2 * math.pi * 2 * t))
+        turn(out[i], nb_limbs, NB_HEAD, CROSSED_LOOK * math.sin(2 * math.pi * t))
+    return out
+
+
+def make_fold(white_fold, stand_frame):
+    """The white-clothed Gerudo's (unused) arm-folding motion over Nabooru's stance."""
+    return np.array([with_arms(stand_frame, f) for f in white_fold])
+
+
+def make_air(relaxed_frame, walk_mean, nb_limbs, arm_out, elbow, hips, knees, lean):
+    """A pose in mid-air: legs bent (left, right hip flexion and knee bend), arms out for balance."""
+    f = relaxed_frame.copy()
+    for limb in NB_LEGS:
+        f[limb + 1] = walk_mean[limb + 1]
+    bend_forward(f, nb_limbs, NB_TORSO, lean)
+    for (thigh, shin), hip, knee in zip(((1, 2), (4, 5)), hips, knees):
+        rotate_world(f, nb_limbs, thigh, X_AXIS, -hip)
+        rotate_world(f, nb_limbs, shin, X_AXIS, knee)
+    for (upper, fore), side in (((8, 9), 1), ((11, 12), -1)):
+        rotate_world(f, nb_limbs, upper, Z_AXIS, side * arm_out)
+        rotate_world(f, nb_limbs, fore, X_AXIS, -elbow)
+    return f[None]
+
+
+def make_run_back(run, nb_limbs, lean):
+    """Her run with the torso upright (leaning back by `lean` degrees), to play backwards."""
+    out = run.copy()
+    for f in out:
+        bend_forward(f, nb_limbs, NB_TORSO, -lean)
+    return out
+
+
+def tilt_sword(swords, table, nb_limbs, joint, axis, degrees):
+    """Rotate one scimitar (1 = left hand, 2 = right) about a model-space axis through her hand."""
+    hand = 10 if joint == 1 else 13
+    out = swords.copy()
+    half = math.radians(degrees) / 2
+    R = rot_from_quat(np.concatenate([[math.cos(half)], np.asarray(axis, float) / np.linalg.norm(axis) * math.sin(half)]))
+    for f in range(len(out)):
+        W, _ = fk(nb_limbs, table[f])
+        out[f, joint] = zyx_from_rot(W[hand].T @ R @ W[hand] @ rot_zyx(swords[f, joint]))
+    return out
+
+
 SCIMITAR_BLADE = np.array([-0.25, -1.0, 0.0])  # blade direction in the scimitar's own frame (tip at -882, -3350)
-IDLE_BLADE = np.array([0.3, -0.45, 0.85])  # left blade in model space: forward, down, a little outward (+X = her left)
+CARRY_BLADE = np.array([0.3, -0.45, 0.85])  # left blade in model space: forward, down, a little outward (+X = her left)
 
 
-def resting_swords(base_frame, nb_limbs, roll):
-    """Scimitars for an idle with her arms hanging: blades pointing forward and down, clear of her legs.
-    `roll` (+1/-1) picks which way the flat of the blade faces."""
+def carry_swords(base_frame, nb_limbs, sword_tables):
+    """How she holds the scimitars with her arms down (running, walking): of all the ways the fighter grips them
+    (every frame of every fighter animation, relative to her hand), the one that points each blade closest to
+    forward and down, clear of her legs."""
     W, _ = fk(nb_limbs, base_frame)
+    blade = SCIMITAR_BLADE / np.linalg.norm(SCIMITAR_BLADE)
     out = np.zeros((1, 3, 3), int)
-    a1 = SCIMITAR_BLADE / np.linalg.norm(SCIMITAR_BLADE)
-    a3 = np.array([0.0, 0.0, 1.0])
-    A = np.column_stack([a1, np.cross(a3, a1), a3])
     for joint, hand, side in ((1, 10, 1.0), (2, 13, -1.0)):
-        d = IDLE_BLADE * np.array([side, 1, 1])
-        d /= np.linalg.norm(d)
-        lateral = np.array([side * roll, 0.0, 0.0])
-        b3 = lateral - lateral.dot(d) * d
-        b3 /= np.linalg.norm(b3)
-        B = np.column_stack([d, np.cross(b3, d), b3])
-        out[0, joint] = zyx_from_rot(W[hand].T @ B @ A.T)
+        target = CARRY_BLADE * np.array([side, 1, 1])
+        target /= np.linalg.norm(target)
+        grips = [frame[joint] for table in sword_tables.values() for frame in table]
+        out[0, joint] = max(grips, key=lambda g: float((W[hand] @ rot_zyx(g) @ blade) @ target))
     return out
 
 
@@ -430,8 +536,26 @@ def verify_mirror(nb_limbs, table, mirrored):
     return err
 
 
+def continuous(table: np.ndarray) -> np.ndarray:
+    """The same rotations, each frame using whichever of its two equivalent Euler forms, (x, y, z) or
+    (x + 180, 180 - y, z + 180), is closer to the previous frame's: the game interpolates between frames angle by
+    angle, so a flip between the forms would swing the limb all the way round."""
+    out = table.copy()
+    wrap = lambda v: ((v + 0x8000) & 0xFFFF) - 0x8000
+    for f in range(1, len(out)):
+        for j in range(1, out.shape[1]):
+            x, y, z = (int(v) for v in out[f, j])
+            alt = (wrap(x + 0x8000), wrap(0x8000 - y), wrap(z + 0x8000))
+            prev = out[f - 1, j]
+            dist = lambda r: sum(abs(wrap(a - int(b))) for a, b in zip(r, prev))
+            if dist(alt) < dist((x, y, z)):
+                out[f, j] = alt
+    return out
+
+
 def encode_animation(table: np.ndarray) -> bytes:
     """SoH binary Normal animation (no static values: index k*frames + frame)."""
+    table = continuous(table)
     frames, joints, _ = table.shape
     values, indices = [], []
     for j in range(joints):
@@ -496,12 +620,15 @@ def main():
         if job.arms_from_walk:
             table = arms_from_walk(table, nb_limbs, nb_walk.table)
             skip = NB_L_ARM + NB_R_ARM + (NB_TORSO, NB_HEAD, 15, 16)  # torso moves everything above it
+        if src is WHITE:
+            table[:, 0] = tables["gPlayAsNabooruStandAnim"][0, 0]
         err = verify(src, nb_limbs, limbs, table, anim.table, skip)
         note = " (arms, torso sway from her walk)" if job.arms_from_walk else ""
         print(f"{job.out}: {anim.frames} frames from {job.anim}{note}; max joint error {err:.2f} units")
         if err > 2.0:
             sys.exit(f"retarget check failed for {job.out}")
-        resources[f"objects/object_nb/{job.out}"] = encode_animation(table)
+        if job.write:
+            resources[f"objects/object_nb/{job.out}"] = encode_animation(table)
         tables[job.out] = table
         if src is FIGHTER:
             swords = sword_table(anim)
@@ -524,11 +651,38 @@ def main():
 
     relaxed = make_relaxed(tables["gPlayAsNabooruStandAnim"], nb_walk.table, nb_limbs)
     add("Relaxed", relaxed, "her stance with relaxed, swaying arms")
-    # resting grip: blades forward and down, their curve rising towards the tip
-    resources["objects/object_nb/gPlayAsNabooruRestingSwordsAnim"] = encode_animation(resting_swords(relaxed[0], nb_limbs, -1))
     add("Tired", make_tired(relaxed[0], nb_limbs), "relaxed stance bent over, breathing hard")
+    resources["objects/object_nb/gPlayAsNabooruCarrySwordsAnim"] = encode_animation(
+        carry_swords(relaxed[0], nb_limbs, sword_tables))
     guard = make_guard(tables["gPlayAsNabooruBlockAnim"], tables["gPlayAsNabooruNeutralAnim"], nb_limbs)
     add("Guard", guard, "crossed-scimitar block standing upright", sword_tables["gPlayAsNabooruBlockAnim"][:1])
+
+    # armed idle: the fighter's standing pose (one blade on her shoulder, one held low), the low blade tilted away
+    # from her body and the high one back from her head so neither cuts through her
+    stand = tables["gPlayAsNabooruStandAnim"]
+    swords = tilt_sword(sword_tables["gPlayAsNabooruStandAnim"], stand, nb_limbs, 2, X_AXIS, 60)
+    swords = tilt_sword(swords, stand, nb_limbs, 1, X_AXIS, -15)
+    add("ArmedIdle", stand, "stance with scimitars, blades clear of her body", swords)
+    add("ArmedTired", make_tired(stand[0], nb_limbs), "armed stance bent over, breathing hard", swords[:1])
+
+    # empty-handed idle: she folds her arms (the white-clothed Gerudo's unused motion) and keeps them folded
+    stand0 = stand[0]
+    add("CrossedArms", make_crossed(tables["gPlayAsNabooruWhiteIdleAnim"][0], stand0, nb_limbs),
+        "white-clothed Gerudo's folded arms, breathing and looking around")
+    add("FoldArms", make_fold(tables["gPlayAsNabooruWhiteFoldArmsAnim"], stand0), "folding her arms")
+
+    add("Air", make_air(relaxed[0], mean_frame(nb_walk.table), nb_limbs, arm_out=25, elbow=45, hips=(40, 25),
+                        knees=(85, 65), lean=12), "in the air: knees drawn up, arms out")
+    run = tables["gPlayAsNabooruRunAnim"]
+    lean = forward_lean(nb_limbs, run) - forward_lean(nb_limbs, nb_walk.table) + 4.0
+    add("RunBack", make_run_back(run, nb_limbs, lean), f"run leaning back {lean:.1f} degrees, for running backwards")
+
+    # moving with scimitars out: her legs walk/run, her arms hold the blades as in her fighting stance
+    ready_arms = tables["gPlayAsNabooruNeutralAnim"][0]
+    ready_swords = sword_tables["gPlayAsNabooruNeutralAnim"][:1]
+    run_back = make_run_back(run, nb_limbs, lean)
+    for name, table in (("ArmedRun", run), ("ArmedRunBack", run_back), ("ArmedWalk", nb_walk.table)):
+        add(name, np.array([with_arms(f, ready_arms) for f in table]), "with scimitars held ready", ready_swords)
 
     reflections = choose_reflections(nb_limbs, nb_walk.table)
     side = tables["gPlayAsNabooruSidestepAnim"]
