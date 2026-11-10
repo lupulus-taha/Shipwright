@@ -132,24 +132,17 @@ const Move kBackflipEnd = { .name = "BackflipEnd",
 // jumping and falling (landings are the end of the fighter's drop-from-the-ceiling animation)
 const Move kAirborne = { "Airborne", GEN(Air), nullptr, Mode::Pose, 0 };       // knees drawn up, arms out
 const Move kLand = { "Land", GEN(Jump), GEN_SWORDS(Jump), Mode::Sync, 1, 16 }; // after a long drop, standing
-// after a hop or a medium drop: the same landing with half the crouch, standing up relaxed instead of in her stance
+// after a hop or a medium drop: the same landing with her knees half as bent, settling into her idle
 const Move kLandShort = { .name = "LandShort",
-                          .anim = GEN(LandSoftArmed),
+                          .anim = GEN(LandLowArmed),
                           .swords = nullptr,
                           .mode = Mode::Sync,
-                          .start = 3,
+                          .start = 1,
                           .end = 16,
-                          .bareAnim = GEN(LandSoft) };
-// after a long drop, moving on (Link rolls): a quick soft landing, then her walk/run takes over
-const Move kLandQuick = { .name = "LandQuick",
-                          .anim = GEN(LandSoftArmed),
-                          .swords = nullptr,
-                          .mode = Mode::Once,
-                          .start = 3,
-                          .end = 14,
-                          .speed = 2.0f,
-                          .bareAnim = GEN(LandSoft) };
-constexpr s32 kLandQuickFrames = 6;
+                          .bareAnim = GEN(LandLow) };
+// after a long drop, moving on (Link rolls): a quick dip, then her walk/run takes over
+const Move kLandQuick = { "LandQuick", GEN(Jump), GEN_SWORDS(Jump), Mode::Once, 4, 14, 2.0f };
+constexpr s32 kLandQuickFrames = 5;
 constexpr f32 kLongDrop = 80.0f; // Link's own threshold: shorter drops have no landing
 // getting hurt
 const Move kDamage = {

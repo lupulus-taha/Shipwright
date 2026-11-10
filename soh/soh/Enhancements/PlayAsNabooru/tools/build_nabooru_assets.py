@@ -506,11 +506,13 @@ def hold_blades(frame, nb_limbs, arms):
     return f
 
 
-# held normally, blades out of the thumb side pointing forward: standing and walking with forearms raised a little,
-# running with her arm swing
-HOLD_IDLE = {1: (20, 60, 60, (20, -20, 20)), 2: (20, 60, 60, (-20, 20, 20))}
-HOLD_WALK = {1: (20, 60, 45, (20, -20, 20)), 2: (20, 60, 60, (-20, 20, 20))}
-HOLD_RUN = {1: (10, 0, -75, (0, -20, 20)), 2: (10, 0, -60, (0, 0, 20))}
+# arms lax at her sides (only the forearm roll and wrist change), blades held normally, pointing forward and a little
+# down; running, her arms swing a little wider so the blades pass her legs
+TIRED_ARMS_OUT = 15
+HOLD_IDLE = {1: (0, 0, -90, (30, -60, 60)), 2: (0, 0, -45, (-45, 60, 60))}
+HOLD_WALK = {1: (0, 0, -45, (30, -60, 60)), 2: (0, 0, -75, (-45, 60, 60))}
+HOLD_RUN = {1: (20, 0, -45, (30, -60, 60)), 2: (20, 0, -75, (-45, 60, 60))}
+HOLD_TIRED = {1: (TIRED_ARMS_OUT, 0, -90, (30, -60, 60)), 2: (TIRED_ARMS_OUT, 0, -45, (-45, 60, 60))}
 
 
 def blend_frames(a, b, w):
@@ -532,6 +534,27 @@ def make_soft_landing(jump, rest):
     for f in range(len(jump)):
         settle = min(max((f - 6) / (len(jump) - 7), 0.0), 1.0)
         out.append(blend_frames(jump[f], rest, SOFT_LANDING + (1 - SOFT_LANDING) * settle))
+    return np.array(out)
+
+
+LOW_LANDING_LEGS = 0.5  # how much of the landing's knee bend to take out
+NB_LEG_JOINTS = (0, 1, 2, 3, 4, 5, 6, 18)  # table rows: root translation and rotation, legs, waist
+
+
+def make_low_landing(jump, rest, clearance=None):
+    """The fighter's landing with her knees bent about half as much; her arms and upper body ease into `rest`
+    over the second half instead of rising into her fighting stance. With `clearance` (she holds scimitars), any
+    frame where a blade would cut her takes more of `rest`'s upper body, until it doesn't."""
+    out = []
+    for f in range(len(jump)):
+        settle = min(max((f - 8) / (len(jump) - 9), 0.0), 1.0)
+        legs = blend_frames(jump[f], rest, LOW_LANDING_LEGS + (1 - LOW_LANDING_LEGS) * settle)
+        for upper in np.arange(settle, 1.0001, 0.1):
+            frame = blend_frames(jump[f], rest, min(upper, 1.0))
+            frame[list(NB_LEG_JOINTS)] = legs[list(NB_LEG_JOINTS)]
+            if clearance is None or clearance.count(frame) == 0:
+                break
+        out.append(frame)
     return np.array(out)
 
 
@@ -729,7 +752,8 @@ def main():
     # with scimitars, standing: her relaxed stance, arms at her sides, blades hanging down
     clearance = BladeClearance(nb_limbs)
     armed_idle = np.array([hold_blades(f, nb_limbs, HOLD_IDLE) for f in relaxed])
-    armed_tired = make_tired(armed_idle[0], nb_limbs)
+    # bent over, her arms swing out a little so the blades clear her legs
+    armed_tired = make_tired(hold_blades(relaxed[0], nb_limbs, HOLD_TIRED), nb_limbs)
     stand = tables["gPlayAsNabooruStandAnim"]
     # empty-handed idle: she folds her arms (the white-clothed Gerudo's unused motion) and keeps them folded
     stand0 = stand[0]
@@ -750,8 +774,8 @@ def main():
              "ArmedRunBack": np.array([hold_blades(f, nb_limbs, HOLD_RUN) for f in make_run_back(run, nb_limbs, lean)])}
     jump = tables["gPlayAsNabooruJumpAnim"]
     soft = make_soft_landing(jump, relaxed[0])
-    add("LandSoft", soft, "landing with half the crouch, standing up relaxed")
-    armed["LandSoftArmed"] = make_soft_landing(jump, armed_idle[0])
+    add("LandLow", make_low_landing(jump, relaxed[0]), "landing with the knees half as bent, settling relaxed")
+    armed["LandLowArmed"] = make_low_landing(jump, armed_idle[0], clearance)
     add("FlipBare", make_bare_flip(tables["gPlayAsNabooruFlipAnim"], soft[5], relaxed[0]),
         "backflip landing relaxed, for empty hands")
     for name, table in armed.items():
