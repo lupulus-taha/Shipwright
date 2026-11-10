@@ -62,9 +62,10 @@ struct Move {
     f32 start = 0.0f;
     f32 end = -1.0f; // -1: last frame
     f32 speed = 1.0f;
-    f32 lift = 0.0f;         // extra height (model units) at the middle of the move, for leaps
-    f32 span = 1.0f;         // Sync: the fraction of Link's animation that start..end covers
-    f32 swordsFrame = -1.0f; // >= 0: hold this frame of `swords` instead of following the body's frame
+    f32 lift = 0.0f;                // extra height (model units) at the middle of the move, for leaps
+    f32 span = 1.0f;                // Sync: the fraction of Link's animation that start..end covers
+    f32 swordsFrame = -1.0f;        // >= 0: hold this frame of `swords` instead of following the body's frame
+    const char* bareAnim = nullptr; // the same move for empty hands (same frame count), if it differs
 };
 
 // The jump attack leaps higher than the fighter's flip (model units, her model is drawn at 1/100 scale).
@@ -119,16 +120,36 @@ const Move kBackflip = { .name = "Backflip",
                          .mode = Mode::Sync,
                          .start = 0,
                          .end = 9,
-                         .span = 0.7f };
-const Move kBackflipEnd = { "BackflipEnd", GEN(Flip), GEN_SWORDS(Flip), Mode::Sync, 9, 10 };
+                         .span = 0.7f,
+                         .bareAnim = GEN(FlipBare) };
+const Move kBackflipEnd = { .name = "BackflipEnd",
+                            .anim = GEN(Flip),
+                            .swords = GEN_SWORDS(Flip),
+                            .mode = Mode::Sync,
+                            .start = 9,
+                            .end = 10,
+                            .bareAnim = GEN(FlipBare) }; // empty-handed she stands up relaxed
 // jumping and falling (landings are the end of the fighter's drop-from-the-ceiling animation)
 const Move kAirborne = { "Airborne", GEN(Air), nullptr, Mode::Pose, 0 };       // knees drawn up, arms out
 const Move kLand = { "Land", GEN(Jump), GEN_SWORDS(Jump), Mode::Sync, 1, 16 }; // after a long drop, standing
-// (the fighter's landing ends by raising her arms into her stance, frames 12-16: only the long landing keeps it)
-const Move kLandShort = { "LandShort", GEN(Jump), GEN_SWORDS(Jump), Mode::Sync, 5, 11 }; // after a hop
-// after a long drop, moving on: a quick dip, then her walk/run takes over (Link rolls)
-const Move kLandQuick = { "LandQuick", GEN(Jump), GEN_SWORDS(Jump), Mode::Once, 4, 11, 2.0f };
-constexpr s32 kLandQuickFrames = 5;
+// after a hop or a medium drop: the same landing with half the crouch, standing up relaxed instead of in her stance
+const Move kLandShort = { .name = "LandShort",
+                          .anim = GEN(LandSoftArmed),
+                          .swords = nullptr,
+                          .mode = Mode::Sync,
+                          .start = 3,
+                          .end = 16,
+                          .bareAnim = GEN(LandSoft) };
+// after a long drop, moving on (Link rolls): a quick soft landing, then her walk/run takes over
+const Move kLandQuick = { .name = "LandQuick",
+                          .anim = GEN(LandSoftArmed),
+                          .swords = nullptr,
+                          .mode = Mode::Once,
+                          .start = 3,
+                          .end = 14,
+                          .speed = 2.0f,
+                          .bareAnim = GEN(LandSoft) };
+constexpr s32 kLandQuickFrames = 6;
 constexpr f32 kLongDrop = 80.0f; // Link's own threshold: shorter drops have no landing
 // getting hurt
 const Move kDamage = {
@@ -246,6 +267,7 @@ struct Layer {
     Vec3s joints[NB_LIMB_MAX];
     Vec3s morph[NB_LIMB_MAX];
     const Move* move = nullptr;
+    const char* anim = nullptr; // the animation playing `move`
     f32 onceFrame = 0.0f;
     bool ready = false;
 };
@@ -315,6 +337,11 @@ f32 LastFrame(const Move* move) {
     return Animation_GetLastFrame((AnimationHeader*)move->anim);
 }
 
+// the animation for a move, armed or empty-handed
+const char* AnimFor(const Move* move) {
+    return (!sShowSwords && move->bareAnim != nullptr && HasAnimation(move->bareAnim)) ? move->bareAnim : move->anim;
+}
+
 f32 EndFrame(const Move* move) {
     return (move->end < 0.0f) ? LastFrame(move) : move->end;
 }
@@ -364,18 +391,25 @@ void MixTranslation(Vec3s& a, const Vec3s& b, f32 weight) {
 
 // Switches a layer to a move; returns whether it changed. Blending into it is done on her final pose.
 bool SetMove(Layer& layer, const Move* move) {
+    const char* anim = AnimFor(move);
     if (move == layer.move) {
+        if (anim != layer.anim) { // drew or put away her scimitars mid-move: same frame, other animation
+            layer.skel.animation = (AnimationHeader*)anim;
+            layer.anim = anim;
+            return true;
+        }
         return false;
     }
     f32 last = LastFrame(move);
     if (move->mode == Mode::Loop) {
-        Animation_Change(&layer.skel, (AnimationHeader*)move->anim, 1.0f, 0.0f, last, ANIMMODE_LOOP, 0.0f);
+        Animation_Change(&layer.skel, (AnimationHeader*)anim, 1.0f, 0.0f, last, ANIMMODE_LOOP, 0.0f);
     } else {
         // frames are set by hand every update
-        Animation_Change(&layer.skel, (AnimationHeader*)move->anim, 0.0f, move->start, last, ANIMMODE_ONCE, 0.0f);
+        Animation_Change(&layer.skel, (AnimationHeader*)anim, 0.0f, move->start, last, ANIMMODE_ONCE, 0.0f);
     }
     layer.onceFrame = move->start;
     layer.move = move;
+    layer.anim = anim;
     return true;
 }
 
@@ -669,7 +703,7 @@ void Nabooru_OnPlayerUpdate() {
 
     // The fighter's moves end in her fighting stance; with empty hands, let her arms come down once she's landed.
     if (!sShowSwords && overlay == nullptr && HasAnimation(kIdle.anim)) {
-        bool late = body == &kBackflipEnd || (body == &kLand && sBody.move == body && sBody.skel.curFrame >= 9.0f);
+        bool late = body == &kLand && sBody.move == body && sBody.skel.curFrame >= 9.0f;
         if (late) {
             overlay = &kIdle;
             sMask = Mask::Arms;

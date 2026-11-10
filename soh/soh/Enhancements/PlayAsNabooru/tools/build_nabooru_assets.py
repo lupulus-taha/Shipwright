@@ -506,10 +506,43 @@ def hold_blades(frame, nb_limbs, arms):
     return f
 
 
-# standing: blades hanging down and a little forward; walking: down; running: arms out, blades trailing
-HOLD_IDLE = {1: (0, 40, 120, (0, 0, 30)), 2: (0, 40, 120, (-30, 30, 30))}
-HOLD_WALK = {1: (10, 40, 120, (0, 0, 30)), 2: (0, 40, 150, (0, 0, 30))}
-HOLD_RUN = {1: (30, 0, 60, (30, -30, 30)), 2: (30, 20, 90, (-30, 30, 30))}
+# held normally, blades out of the thumb side pointing forward: standing and walking with forearms raised a little,
+# running with her arm swing
+HOLD_IDLE = {1: (20, 60, 60, (20, -20, 20)), 2: (20, 60, 60, (-20, 20, 20))}
+HOLD_WALK = {1: (20, 60, 45, (20, -20, 20)), 2: (20, 60, 60, (-20, 20, 20))}
+HOLD_RUN = {1: (10, 0, -75, (0, -20, 20)), 2: (10, 0, -60, (0, 0, 20))}
+
+
+def blend_frames(a, b, w):
+    """Pose `a` moved `w` of the way to pose `b` (rotations along the shortest path)."""
+    out = a.copy()
+    out[0] = np.round(a[0] * (1 - w) + b[0] * w)
+    for j in range(1, len(a)):
+        q = slerp(quat_from_rot(rot_zyx(a[j])), quat_from_rot(rot_zyx(b[j])), w)
+        out[j] = zyx_from_rot(rot_from_quat(q))
+    return out
+
+
+SOFT_LANDING = 0.5  # how much of the fighter's landing crouch a soft landing keeps
+
+
+def make_soft_landing(jump, rest):
+    """The fighter's landing with half the crouch, ending standing in `rest` instead of rising into her stance."""
+    out = []
+    for f in range(len(jump)):
+        settle = min(max((f - 6) / (len(jump) - 7), 0.0), 1.0)
+        out.append(blend_frames(jump[f], rest, SOFT_LANDING + (1 - SOFT_LANDING) * settle))
+    return np.array(out)
+
+
+def make_bare_flip(flip, crouch, rest):
+    """The fighter's backflip for empty hands: the flight unchanged, then landing into a light crouch and standing up
+    relaxed instead of in her fighting stance."""
+    out = flip.copy()
+    out[8] = blend_frames(flip[8], crouch, 0.35)
+    out[9] = blend_frames(flip[9], crouch, 0.75)
+    out[10] = rest
+    return out
 
 
 # Left/right limb pairs, and the reflection that maps each limb's local frame onto its mirror image's.
@@ -715,6 +748,12 @@ def main():
              "ArmedWalk": np.array([hold_blades(f, nb_limbs, HOLD_WALK) for f in nb_walk.table]),
              "ArmedRun": np.array([hold_blades(f, nb_limbs, HOLD_RUN) for f in run]),
              "ArmedRunBack": np.array([hold_blades(f, nb_limbs, HOLD_RUN) for f in make_run_back(run, nb_limbs, lean)])}
+    jump = tables["gPlayAsNabooruJumpAnim"]
+    soft = make_soft_landing(jump, relaxed[0])
+    add("LandSoft", soft, "landing with half the crouch, standing up relaxed")
+    armed["LandSoftArmed"] = make_soft_landing(jump, armed_idle[0])
+    add("FlipBare", make_bare_flip(tables["gPlayAsNabooruFlipAnim"], soft[5], relaxed[0]),
+        "backflip landing relaxed, for empty hands")
     for name, table in armed.items():
         clipping = sum(clearance.count(f) for f in table)
         if clipping:
