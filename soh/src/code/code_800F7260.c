@@ -3,6 +3,8 @@
 #include "vt.h"
 
 #include "soh/Enhancements/audio/AudioEditor.h"
+#include "soh/Enhancements/game-interactor/GameInteractor.h"
+#include "soh/Enhancements/game-interactor/GameInteractor_Hooks.h"
 
 typedef struct {
     /* 0x00 */ u16 sfxId;
@@ -127,6 +129,10 @@ void Audio_ClearBGMMute(u8 channelIdx) {
 void Audio_PlaySfxGeneral(u16 sfxId, Vec3f* pos, u8 token, f32* freqScale, f32* vol, s8* reverbAdd) {
     size_t i;
     SoundRequest* req;
+
+    if (!GameInteractor_Should(VB_PLAY_SFX, true, &sfxId, pos)) {
+        return;
+    }
 
     if (!gSoundBankMuted[SFX_BANK_SHIFT(sfxId)]) {
         req = &sSoundRequests[sSoundRequestWriteIndex];
@@ -696,6 +702,13 @@ void Audio_StopSfxById(u32 sfxId) {
     }
     cmp.sfxId = sfxId;
     Audio_RemoveMatchingSoundRequests(5, &cmp);
+
+    // SoH: also stop what this sound was swapped for when it was played (see VB_PLAY_SFX)
+    u16 swappedId = sfxId;
+    GameInteractor_Should(VB_PLAY_SFX, true, &swappedId, NULL);
+    if (swappedId != (u16)sfxId) {
+        Audio_StopSfxById(swappedId);
+    }
 }
 
 void Audio_ProcessSoundRequests(void) {

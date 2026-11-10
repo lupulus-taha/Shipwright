@@ -11,7 +11,7 @@
 //   hold N <input>            hold the input for N frames
 //   shots N EVERY NAME <input> hold the input for N frames, taking a screenshot every EVERY frames
 //   shot NAME                 screenshot (gameplay pauses until it's taken)
-//   log on|off                per-frame log to <out>/log.txt
+//   log on|off                per-frame log to <out>/log.txt (also the player's voice sounds: "sfx ID")
 //   mark TEXT                 write TEXT into the log
 //   hit TYPE                  hit the player (0 light, 1 knockdown, 2 small knockback, 3 frozen, 4 shock)
 //   health N                  set health in 1/16 hearts
@@ -250,10 +250,31 @@ bool PlayerReady() {
            player->actor.bgCheckFlags & BGCHECKFLAG_GROUND;
 }
 
+// Logs the voice (and enemy-bank) sounds coming from the player, after any mod swapped them: registered on the first
+// frame, after the mods' own hooks.
+void LogPlayerSfx(u16 sfxId, const Vec3f* pos) {
+    Player* player = GetPlayer();
+    if (sLog == nullptr || !sLogging || player == nullptr || pos != &player->actor.projectedPos) {
+        return;
+    }
+    if (SFX_BANK_SHIFT(sfxId) == 6 || SFX_BANK_SHIFT(sfxId) == 3) {
+        fprintf(sLog, "%5d sfx %04X\n", sFrame, sfxId);
+    }
+}
+
 // Runs once per game frame, right after the real controller state was copied in and before the game state updates.
 void OnFrameStart() {
     if (gGameState == nullptr) {
         return;
+    }
+    static bool sSfxLogRegistered = false;
+    if (!sSfxLogRegistered) {
+        sSfxLogRegistered = true;
+        REGISTER_VB_SHOULD(VB_PLAY_SFX, {
+            u16* sfxId = va_arg(args, u16*);
+            Vec3f* pos = va_arg(args, Vec3f*);
+            LogPlayerSfx(*sfxId, pos);
+        });
     }
     sFrame++;
     Input* input = &gGameState->input[0];

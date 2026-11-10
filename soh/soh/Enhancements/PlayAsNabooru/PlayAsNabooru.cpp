@@ -728,6 +728,59 @@ void Nabooru_OnPlayerUpdate() {
     BlendLayers();
 }
 
+// ------------------------------------------------------------------------------------------------ voice
+
+// Link's (adult) voice clips that have a counterpart in Nabooru's own (from her Spirit Temple cutscenes) or the Gerudo
+// fighter's. Everything else (climbing, pushing, jumping off ledges, magic, sneezing, drinking, ...) stays Link's.
+struct VoiceSwap {
+    u16 link;
+    u16 hers;
+};
+
+const VoiceSwap kVoiceSwaps[] = {
+    { NA_SE_VO_LI_SWORD_N, NA_SE_EN_GERUDOFT_ATTACK },       // slashes and jumps
+    { NA_SE_VO_LI_SWORD_L, NA_SE_EN_GERUDOFT_ATTACK },       // strong slashes, spin and jump attacks
+    { NA_SE_VO_LI_DAMAGE_S, NA_SE_EN_GERUDOFT_DAMAGE },      // hit
+    { NA_SE_VO_LI_LAND_DAMAGE_S, NA_SE_EN_GERUDOFT_DAMAGE }, // hurt by a long fall
+    { NA_SE_VO_LI_DOWN, NA_SE_EN_GERUDOFT_DEAD },            // dying
+    { NA_SE_VO_LI_FALL_L, NA_SE_VO_NB_CRY_0 },               // knocked flying, falling into a pit
+    { NA_SE_VO_LI_TAKEN_AWAY, NA_SE_VO_NB_CRY_0 },           // carried off by a Wallmaster, electrocuted
+    { NA_SE_VO_LI_HELD, NA_SE_VO_NB_AGONY },                 // grabbed by a ReDead
+    { NA_SE_VO_LI_FREEZE, NA_SE_VO_NB_AGONY },               // frozen, slammed to the ground
+    { NA_SE_VO_LI_DEMO_DAMAGE, NA_SE_VO_NB_AGONY },          // hurt in cutscenes (Twinrova's beams, ...)
+};
+
+// Dark Link speaks with Link's voice too, from his own position; he still looks like Link, so he keeps it.
+bool IsDarkLink(const Vec3f* pos) {
+    if (pos == nullptr || gPlayState == nullptr) {
+        return false;
+    }
+    for (s32 category = 0; category < ACTORCAT_MAX; category++) {
+        for (Actor* actor = gPlayState->actorCtx.actorLists[category].head; actor != nullptr; actor = actor->next) {
+            if (actor->id == ACTOR_EN_TORCH2 && pos == &actor->projectedPos) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+// Some sounds are played with SFX_FLAG cleared (repeated every frame, e.g. the scream while electrocuted); keep that.
+void SwapVoice(u16* sfxId, const Vec3f* pos) {
+    u16 id = *sfxId | SFX_FLAG;
+    if (SFX_BANK_MASK(id) != SFX_BANK_MASK(NA_SE_VO_LI_SWORD_N)) {
+        return;
+    }
+    for (const VoiceSwap& swap : kVoiceSwaps) {
+        if (id == swap.link) {
+            if (!IsDarkLink(pos)) {
+                *sfxId = (swap.hers & ~SFX_FLAG) | (*sfxId & SFX_FLAG);
+            }
+            return;
+        }
+    }
+}
+
 void Nabooru_OnPlayerDraw(bool isFirstPerson) {
     if (isFirstPerson || !sBody.ready || gPlayState == nullptr) {
         return;
@@ -756,6 +809,13 @@ void RegisterPlayAsNabooru() {
             return;
         }
         *dList = NULL;
+    });
+
+    // Her voice instead of Link's, where she has a counterpart.
+    COND_VB_SHOULD(VB_PLAY_SFX, enabled, {
+        u16* sfxId = va_arg(args, u16*);
+        Vec3f* pos = va_arg(args, Vec3f*);
+        SwapVoice(sfxId, pos);
     });
 }
 

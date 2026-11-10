@@ -2476,6 +2476,17 @@ typedef enum {
     // - `*EnSyatekiItm`
     VB_PLAY_SHOOTING_GALLERY,
 
+    // Fired from Audio_PlaySfxGeneral for every sound effect, and from Audio_StopSfxById so a sound swapped when it
+    // was played is stopped under its new id too.
+    // #### `result`
+    // ```c
+    // true
+    // ```
+    // #### `args`
+    // - `u16*` sfxId (write to *sfxId to play another sound instead)
+    // - `Vec3f*` pos (the sound's source; NULL when stopping a sound by id)
+    VB_PLAY_SFX,
+
     // #### `result`
     // ```c
     // (giEntry.itemId != ITEM_NONE) && (giEntry.gi >= 0) && (Item_CheckObtainability(giEntry.itemId) == ITEM_NONE)
