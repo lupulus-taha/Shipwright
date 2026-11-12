@@ -313,7 +313,7 @@ enum SceneID : int {
 enum SceneID {
 #endif
     #include "tables/scene_table.h"
-    /* 0x6E */ SCENE_ID_MAX
+    /* 0x6F */ SCENE_ID_MAX
 };
 
 // this define exists to preserve shiftability for an unused scene that is
@@ -327,7 +327,7 @@ enum SceneID {
 
 typedef enum {
     #include "tables/entrance_table.h"
-    /* 0x614 */ ENTR_MAX
+    /* 0x618 */ ENTR_MAX
 } EntranceIndex;
 
 #define ENTR_LOAD_OPENING -1

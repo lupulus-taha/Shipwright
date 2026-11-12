@@ -133,6 +133,8 @@ const char* const sceneMappings[] = {
     "Castle Maze (Broken)",
     "SRD Room",
     "Chest Room",
+    // Play as Nabooru mod
+    "Jackal Refuge",
 };
 
 const char* const countMappings[] = {

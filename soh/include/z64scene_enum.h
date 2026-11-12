@@ -10,7 +10,7 @@ enum SceneID : int {
 enum SceneID {
 #endif
 #include "tables/scene_table.h"
-    /* 0x6E */ SCENE_ID_MAX
+    /* 0x6F */ SCENE_ID_MAX
 };
 
 #undef DEFINE_SCENE

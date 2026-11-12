@@ -701,6 +701,27 @@ void SohMenu::AddMenuEnhancements() {
         .CVar(CVAR_ENHANCEMENT("PlayAsNabooru"))
         .Options(CheckboxOptions().Tooltip(
             "Replaces adult Link's model with Nabooru, using her own skeleton and animations. Work in progress."));
+    AddWidget(path, "Warp to Jackal Refuge", WIDGET_BUTTON)
+        .Options(ButtonOptions().Tooltip("Travels to Jackal Refuge, the first new area of the Play as Nabooru mod. "
+                                         "Needs jackal_refuge.o2r in the mods folder and a loaded save file."))
+        .PreFunc([](WidgetInfo& info) {
+            if (!ResourceMgr_FileExists("scenes/shared/jackal_refuge_scene/jackal_refuge_scene")) {
+                info.options->disabled = true;
+                info.options->disabledTooltip = "jackal_refuge.o2r is not in the mods folder "
+                                                "(PlayAsNabooru/tools/build_jackal_refuge.py makes it).";
+            } else if (gPlayState == NULL) {
+                info.options->disabled = true;
+                info.options->disabledTooltip = "Load a save file first.";
+            }
+        })
+        .Callback([](WidgetInfo& info) {
+            if (gPlayState != NULL) {
+                gPlayState->nextEntranceIndex = ENTR_JACKAL_REFUGE_0;
+                gPlayState->transitionTrigger = TRANS_TRIGGER_START;
+                gPlayState->transitionType = TRANS_TYPE_FADE_BLACK;
+                gSaveContext.nextTransitionType = TRANS_TYPE_FADE_BLACK;
+            }
+        });
     AddWidget(path, "Enemy Health Bars", WIDGET_CVAR_CHECKBOX)
         .CVar(CVAR_ENHANCEMENT("EnemyHealthBar"))
         .Options(CheckboxOptions().Tooltip("Renders a health bar for Enemies when Z-Targeted."));
