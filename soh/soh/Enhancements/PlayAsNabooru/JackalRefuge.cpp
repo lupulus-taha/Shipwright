@@ -4,8 +4,10 @@
 // their replacements around the camera every frame (called from the scene's draw config in z_scene_table.c):
 //  - a cloudless sky with a white-hot sun (SkyDL), behind everything
 //  - the game's own lens flare and glare, when looking towards that sun
-// and tints the picture slightly warm.
+// It also tints the picture slightly warm and turns on the game's hot-room heat haze (the slow wobble of the whole
+// view in Death Mountain Crater), without the heat timer that comes with real hot rooms.
 
+#include <libultraship/bridge/consolevariablebridge.h>
 #include "soh/Enhancements/game-interactor/GameInteractor.h"
 #include "soh/ShipInit.hpp"
 #include <cmath>
@@ -54,6 +56,13 @@ void JackalRefuge_Draw(PlayState* play) {
 }
 
 static void RegisterJackalRefuge() {
+    // heat haze, unless the player turned it off for accessibility
+    COND_VB_SHOULD(VB_HOT_ROOM_DISTORTION, true, {
+        if (gPlayState != NULL && gPlayState->sceneNum == SCENE_JACKAL_REFUGE &&
+            !CVarGetInteger(CVAR_SETTING("A11yNoHeatHaze"), 0)) {
+            *should = true;
+        }
+    });
     // after the whole world is drawn, under the HUD
     COND_HOOK(OnPlayDrawEnd, true, []() {
         if (gPlayState != NULL && gPlayState->sceneNum == SCENE_JACKAL_REFUGE) {
