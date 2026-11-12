@@ -7489,6 +7489,10 @@ void Camera_UpdateDistortion(Camera* camera) {
             speed = 0.6f;
             speedFactor = 1.0f;
             scaleFactor = 1.0f;
+            // Play as Nabooru mod: a gentler haze in the open desert than in the volcano's hot rooms
+            if (camera->play->sceneNum == SCENE_JACKAL_REFUGE) {
+                scaleFactor = 0.4f;
+            }
         } else {
             // DISTORTION_UNDERWATER_FISHING
             return;
