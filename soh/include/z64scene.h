@@ -398,7 +398,8 @@ typedef enum {
     /* 50 */ SDC_FISHING_POND,
     /* 51 */ SDC_GANONS_TOWER_COLLAPSE_INTERIOR,
     /* 52 */ SDC_INSIDE_GANONS_CASTLE_COLLAPSE,
-    /* 53 */ SDC_MAX
+    /* 53 */ SDC_JACKAL_REFUGE, // Play as Nabooru mod
+    /* 54 */ SDC_MAX
 } SceneDrawConfig;
 
 // Scene commands

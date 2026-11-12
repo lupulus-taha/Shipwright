@@ -1684,6 +1684,14 @@ void func_800A059C(PlayState* play) {
     CLOSE_DISPS(play->state.gfxCtx);
 }
 
+// Scene Draw Config 53 (Play as Nabooru mod): the scorching sky, sun and mirage of Jackal Refuge
+void JackalRefuge_Draw(PlayState* play);
+
+void Scene_DrawConfigJackalRefuge(PlayState* play) {
+    func_80099550(play); // the default config
+    JackalRefuge_Draw(play);
+}
+
 void (*sSceneDrawHandlers[])(PlayState*) = {
     func_80099550, func_8009DA30, func_8009DD5C, func_8009DE78, func_8009E0B8, func_8009E54C, func_8009E730,
     func_8009E8C0, func_8009EAD8, func_8009EE44, func_8009F074, func_8009F1B4, func_8009F270, func_8009F40C,
@@ -1692,7 +1700,7 @@ void (*sSceneDrawHandlers[])(PlayState*) = {
     func_80099760, func_8009B86C, func_80099BD8, func_8009A45C, func_8009A798, func_8009A9DC, func_8009B9BC,
     func_8009BAA4, func_8009BC44, func_8009C3EC, func_8009C0AC, func_8009ACA8, func_8009AFE0, func_8009D0E8,
     func_8009C608, func_8009C8B8, func_8009D31C, func_8009D438, func_8009D5B4, func_8009CAC0, func_8009AB98,
-    func_800A059C, func_8009CF84, func_800A057C, func_800A055C,
+    func_800A059C, func_8009CF84, func_800A057C, func_800A055C, Scene_DrawConfigJackalRefuge,
 };
 
 void Scene_Draw(PlayState* play) {

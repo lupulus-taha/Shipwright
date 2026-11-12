@@ -2,7 +2,11 @@
 """Builds the "Jackal Refuge" scene of the Play as Nabooru mod into a mod archive for SoH's `mods` folder.
 
 No game data is stored in the repository: the pieces taken from the game (the dried-up oasis pit of the Desert
-Colossus, its light settings, the cracked-surface texture) are read from the player's own `oot.o2r` when this runs.
+Colossus, the cracked-surface texture, title card lettering) are read from the player's own `oot.o2r` when this runs.
+
+The place is scorching: instead of the game's sky there is a cloudless one with a white-hot sun (SkyDL, drawn around
+the camera by JackalRefuge.cpp), the light is harsh, the distance fades into bright haze, and the far ground shimmers
+like water (MirageDL, also drawn around the camera).
 
 The area is a first mockup: a flat patch of dry, cracked land in the afternoon, the oasis pit on the right and
 the placeholder of a new dungeon (a box with a row of pillars) on the left. Its title card is set in the game's own
@@ -39,7 +43,26 @@ PILLARS = [(BOX[2] + PILLAR_RADIUS - 20, z) for z in (-1000, -600, -200, 200)]  
 SPAWN = (100, 0, 1900)
 SPAWN_YAW = 0x8000  # facing north: dungeon to the left, pit to the right
 
-TIME = (15, 50)  # time stands still here (the sky only changes to sunset at 17:00)
+TIME = (15, 50)  # time stands still here
+
+# --- scorching atmosphere
+SUN_AZIMUTH, SUN_ELEVATION = -8, 17  # degrees: clockwise from north, above the horizon (keep JackalRefuge.cpp in step)
+SKY_RADIUS = 4000  # the sky is drawn around the camera, behind everything
+HAZE = (255, 238, 200)  # horizon and distance haze
+# sky colours by elevation in degrees, from below the horizon up to the zenith
+SKY = [(-14, HAZE), (0.5, HAZE), (3, (248, 236, 212)), (7, (176, 204, 240)), (14, (92, 150, 240)),
+       (26, (40, 106, 228)), (48, (20, 76, 208)), (90, (12, 56, 184))]
+# the sun: (angle from its centre in degrees, colour, opacity) from the white-hot disc out through its glow
+SUN = [(0, (255, 255, 252), 255), (2.0, (255, 255, 246), 255), (2.9, (255, 250, 226), 190),
+       (6.5, (255, 242, 204), 84), (17, (255, 236, 190), 0)]
+SUN_LIGHT = (255, 236, 192)
+AMBIENT_LIGHT = (138, 124, 106)
+BOUNCE_LIGHT = (64, 52, 36)  # off the ground, from below
+HAZE_START = 995  # the game's fog "near" value (0..1000): 995 starts the haze about 2000 units away
+DRAW_DISTANCE = 12800
+# mirage: (distance from the camera, opacity) of the shimmering layer just above the far ground
+MIRAGE = [(1500, 0), (2600, 150), (5000, 225), (11500, 255)]
+MIRAGE_COLOR = (226, 238, 255)  # the low sky it "reflects"
 
 # ground colours: the texture is a greyscale crack pattern, blended from ENV (surface) to PRIM (cracks)
 GROUND_SURFACE = (240, 210, 162)
@@ -69,6 +92,7 @@ CARD_TEXT = [
     (RANCH, 6, 0), (LAKE, 3, 0), (TIME_CARD, 7, 0), (FOUNTAIN, 8, 1), (KAKARIKO, 13, 1), (LAKE, 3, 0),  # R e f u g e
 ]
 CARD_NARROW = {JABU: 1.4}
+SHIMMER_TEX = "objects/gameplay_keep/gEffUnknown10Tex"  # soft greyscale blobs, 32x32
 
 # ---------------------------------------------------------------- resource plumbing
 M64 = (1 << 64) - 1
@@ -141,6 +165,8 @@ G_SETPRIMCOLOR, G_SETENVCOLOR, G_SETCOMBINE = 0xFA, 0xFB, 0xFC
 G_CULL_BACK, G_FOG, G_LIGHTING, G_TEXTURE_GEN, G_TEXTURE_GEN_LINEAR = 0x400, 0x10000, 0x20000, 0x40000, 0x80000
 # colour combiner inputs
 CC_COMBINED, CC_TEXEL0, CC_PRIMITIVE, CC_SHADE, CC_ENVIRONMENT = 0, 1, 3, 4, 5
+G_ZBUFFER, G_CULL_BOTH = 0x1, 0x600
+CC_TEXEL1 = 2
 PIPESYNC = (G_RDPPIPESYNC << 24, 0, None)
 
 
@@ -329,6 +355,118 @@ def cracked_earth_texture(archive):
     return data[:80] + bytes(min(255, max(0, round((v - lo) * 255 / (hi - lo)))) for v in pixels)
 
 
+# ---------------------------------------------------------------- scorching atmosphere
+def sun_direction():
+    az, el = math.radians(SUN_AZIMUTH), math.radians(SUN_ELEVATION)
+    return (math.sin(az) * math.cos(el), math.sin(el), -math.cos(az) * math.cos(el))
+
+
+def light_settings():
+    """one harsh afternoon light, whatever the game thinks the weather is (it picks among the first twelve)"""
+
+    def direction(d):
+        return struct.pack("<3b", *(round(c * 120) for c in d))
+
+    one = (bytes(AMBIENT_LIGHT) + direction(sun_direction()) + bytes(SUN_LIGHT) + direction((0, -1, 0))
+           + bytes(BOUNCE_LIGHT) + bytes(HAZE) + struct.pack("<hH", HAZE_START, DRAW_DISTANCE))
+    return struct.pack("<I", 12) + one * 12
+
+
+def flat_vertex(pos, rgb, alpha=255, uv=(0, 0)):
+    return (*(round(c) for c in pos), *uv, *rgb, alpha)
+
+
+def render_mode(mode):
+    return (0xE200001C, mode, None)
+
+
+SHADE_ONLY = combine((None, None, None, CC_SHADE), (None, None, None, CC_SHADE),
+                     (None, None, None, CC_COMBINED), ALPHA_COMBINED)
+UNLIT = G_FOG | G_LIGHTING | G_TEXTURE_GEN | G_TEXTURE_GEN_LINEAR | G_CULL_BOTH
+
+
+def sky():
+    """a dome around the camera, coloured by its vertices, then the sun and its glow; nothing is depth-tested"""
+    sides = 24
+
+    def at(azimuth, elevation):
+        a, e = 2 * math.pi * azimuth / sides, math.radians(elevation)
+        return (SKY_RADIUS * math.sin(a) * math.cos(e), SKY_RADIUS * math.sin(e), SKY_RADIUS * math.cos(a) * math.cos(e))
+
+    dome = []
+    for (e0, c0), (e1, c1) in zip(SKY, SKY[1:]):
+        for i in range(sides):
+            a, b = flat_vertex(at(i, e0), c0), flat_vertex(at(i + 1, e0), c0)
+            c, d = flat_vertex(at(i + 1, e1), c1), flat_vertex(at(i, e1), c1)
+            dome.append((a, b, c))
+            if e1 < 90:
+                dome.append((a, c, d))
+
+    s = sun_direction()
+    u = cross(s, (0, 1, 0))
+    u = tuple(c / math.sqrt(dot(u, u)) for c in u)
+    v = cross(s, u)
+
+    def around(i, angle):
+        a, t = 2 * math.pi * i / sides, math.radians(angle)
+        return tuple(SKY_RADIUS * (math.cos(t) * s[k] + math.sin(t) * (math.cos(a) * u[k] + math.sin(a) * v[k]))
+                     for k in range(3))
+
+    sun = []
+    for (t0, c0, a0), (t1, c1, a1) in zip(SUN, SUN[1:]):
+        for i in range(sides):
+            a, b = flat_vertex(around(i, t0), c0, a0), flat_vertex(around(i + 1, t0), c0, a0)
+            c, d = flat_vertex(around(i + 1, t1), c1, a1), flat_vertex(around(i, t1), c1, a1)
+            sun.append((d, c, a))
+            if t0 > 0:
+                sun.append((c, b, a))
+    setup = [PIPESYNC, (G_GEOMETRYMODE << 24 | (~(UNLIT | G_ZBUFFER) & 0xFFFFFF), 0, None),
+             (G_TEXTURE << 24, 0, None), SHADE_ONLY]
+    restore = [PIPESYNC, (G_GEOMETRYMODE << 24 | 0xFFFFFF, G_ZBUFFER, None)]
+    return [(setup + [render_mode(0x0F0A4000)], dome),  # opaque, no depth
+            ([PIPESYNC, render_mode(0x00504240)], sun),  # blended over the sky, no depth
+            (restore, [])]
+
+
+def mirage():
+    """rings around the camera just above the ground: sky-coloured, more opaque with distance, and broken up by two
+    layers of a blobby texture that JackalRefuge.cpp slides against each other (through segment 8)"""
+    sides, size, fmt_i = 32, 32, 4
+    tex = crc64(SHIMMER_TEX)
+    mask = size.bit_length() - 1
+    tile = mask << 14 | mask << 4
+
+    def load(render_tile, tmem):
+        return [
+            (G_SETTIMG_OTR << 24 | fmt_i << 21 | 2 << 19, 0, (tex >> 32, tex & 0xFFFFFFFF)),
+            (G_SETTILE << 24 | fmt_i << 21 | 2 << 19 | tmem, 7 << 24 | tile, None),
+            (G_RDPLOADSYNC << 24, 0, None),
+            (G_LOADBLOCK << 24, 7 << 24 | (size * size // 2 - 1) << 12 | (2048 + size // 8 - 1) // (size // 8), None),
+            PIPESYNC,
+            (G_SETTILE << 24 | fmt_i << 21 | 1 << 19 | (size // 8) << 9 | tmem, render_tile << 24 | tile, None),
+            (G_SETTILESIZE << 24, render_tile << 24 | (size - 1) << 14 | (size - 1) << 2, None),
+        ]
+
+    material = ([PIPESYNC, (G_GEOMETRYMODE << 24 | (~UNLIT & 0xFFFFFF), 0, None), (0xE3001001, 0, None),
+                 (G_TEXTURE << 24 | 2, 0xFFFFFFFF, None)] + load(0, 0) + load(1, 0x100) + [
+        (G_DL << 24, 0x08000001, None),  # this frame's scroll of both layers
+        combine((None, None, None, CC_PRIMITIVE), (CC_TEXEL0, None, CC_TEXEL1, None),
+                (None, None, None, CC_COMBINED), (CC_COMBINED, None, CC_SHADE, None)),
+        render_mode(0x00504A50),  # blended, depth-tested, not written to the depth buffer
+        color(G_SETPRIMCOLOR, MIRAGE_COLOR),
+    ])
+    tris = []
+    for (r0, a0), (r1, a1) in zip(MIRAGE, MIRAGE[1:]):
+        for i in range(sides):
+            def corner(k, r, alpha):
+                a = 2 * math.pi * (i + k) / sides
+                # the texture is stretched sideways: streaks, as seen from the middle
+                return flat_vertex((r * math.sin(a), 3, r * math.cos(a)), (255, 255, 255), alpha, (k * 2048, round(r * 2.4)))
+            a, b, c, d = corner(0, r0, a0), corner(1, r0, a0), corner(1, r1, a1), corner(0, r1, a1)
+            tris += [(a, b, c), (a, c, d)]
+    return [(material, tris)]
+
+
 # ---------------------------------------------------------------- title card
 def card_letters(archive, path, solid=6):
     """the letters of a place title card, left to right, each {(x, y): intensity 0..15}"""
@@ -465,9 +603,9 @@ def ring(cx, cz, radius, sides):
 
 # ---------------------------------------------------------------- the pit, lifted from the Desert Colossus
 def read_scene(archive):
-    """-> (light settings as stored, the oasis' water box) of the Desert Colossus"""
+    """-> the oasis' water box in the Desert Colossus"""
     r = Reader(archive.read(COLOSSUS))
-    collision = lights = None
+    collision = None
     for _ in range(r.get("I")):
         cmd = r.get("I")
         if cmd == 0x18:  # alternate headers
@@ -493,14 +631,12 @@ def read_scene(archive):
         elif cmd == 0x13:  # exits
             r.skip(2, "I")
         elif cmd == 0x0F:
-            count = r.get("I")
-            lights = struct.pack("<I", count) + r.data[r.pos : r.pos + 22 * count]
-            r.pos += 22 * count
+            r.skip(22, "I")
         elif cmd == 0x14:
             break
         else:
             raise SystemExit(f"unexpected scene command {cmd:#x} in the Desert Colossus")
-    assert collision and lights, "the Desert Colossus has no collision or lights?"
+    assert collision, "the Desert Colossus has no collision?"
     c = Reader(archive.read(collision))
     c.pos += 12
     c.skip(6, "i")
@@ -509,7 +645,7 @@ def read_scene(archive):
     c.skip(8, "I")
     c.skip(6, "i")
     assert c.get("i") >= 1, "the Desert Colossus has no oasis?"
-    return lights, c.get("5h")  # water box: x, surface y, z, x length, z length
+    return c.get("5h")  # water box: x, surface y, z, x length, z length
 
 
 def room_display_lists(archive):
@@ -542,7 +678,7 @@ def read_pit(archive):
     The bottom is a fan around the lowest point under the oasis' water; the grass around it is a translucent ring
     (opaque at the water's edge, fading out over the sand) lying on the slope up to the desert floor.
     """
-    lights, (wx, wy, wz, wlx, wlz) = read_scene(archive)
+    wx, wy, wz, wlx, wlz = read_scene(archive)
     opa, xlu = room_display_lists(archive)
 
     def inside(v):
@@ -562,7 +698,7 @@ def read_pit(archive):
     assert rim, "could not find the grass around the oasis"
     for _, tri in bottom + rim:
         assert normal(*(v[:3] for v in tri))[1] > 0, "the pit should face up"
-    return lights, bottom, rim, wy
+    return bottom, rim, wy
 
 
 # ---------------------------------------------------------------- collision
@@ -594,7 +730,7 @@ class Collision:
 
 # ---------------------------------------------------------------- the scene
 def build(archive):
-    lights, pit_bottom, pit_rim, water_level = read_pit(archive)
+    pit_bottom, pit_rim, water_level = read_pit(archive)
     files = {}
     collision = Collision()
 
@@ -718,7 +854,7 @@ def build(archive):
     room = header("OROM") + struct.pack("<I", 6)
     room += struct.pack("<Ib", 0x16, 0)  # echo
     room += struct.pack("<Ibi", 0x08, 0, 0)  # room behaviour
-    room += struct.pack("<I2b", 0x12, 0, 0)  # skybox and sun/moon shown
+    room += struct.pack("<I2b", 0x12, 1, 1)  # the game's sky and sun are replaced by our own
     room += struct.pack("<I3b", 0x10, *TIME, 0)  # time of day, not advancing
     meshes = [("GroundDL", ""), ("DungeonDL", ""), ("PitDL", "PitRimDL")]
     room += struct.pack("<I3b", 0x0A, 0, 0, len(meshes))
@@ -737,9 +873,12 @@ def build(archive):
     scene += struct.pack("<Ibh", 0x07, 1, 2)  # overworld Navi hints, gameplay_field_keep
     scene += struct.pack("<IIH6hH", 0x00, 1, 0, *SPAWN, 0, SPAWN_YAW - 0x10000, 0, 0x0FFF)
     scene += struct.pack("<I4b", 0x11, 0, 1, 0, 0)  # the open sky
-    scene += struct.pack("<I", 0x0F) + lights
+    scene += struct.pack("<I", 0x0F) + light_settings()
     scene += struct.pack("<I", 0x14)
     files[SCENE + "scene"] = scene
+
+    files.update(write_dl(SCENE + "SkyDL", sky()))
+    files.update(write_dl(SCENE + "MirageDL", mirage()))
 
     card = title_card(archive)
     for language in ("ENG", "GER", "FRA", "JPN"):  # the game looks the card up by language
