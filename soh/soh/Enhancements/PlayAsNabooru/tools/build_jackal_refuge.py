@@ -60,7 +60,9 @@ SUN = [(0, (255, 255, 252), 255), (2.0, (255, 255, 246), 255), (2.9, (255, 250, 
 SUN_LIGHT = (255, 236, 192)
 AMBIENT_LIGHT = (138, 124, 106)
 BOUNCE_LIGHT = (64, 52, 36)  # off the ground, from below
-HAZE_START = 995  # the game's fog "near" value (0..1000): 995 starts the haze about 2000 units away
+# the game's fog "near" value (0..1000). With N = 1000 - HAZE_START, things start to fade into the haze 10000 / N
+# units from the camera, are half gone at twice that distance and three quarters gone at four times.
+HAZE_START = 990
 DRAW_DISTANCE = 12800
 
 # ground colours: the texture is a greyscale crack pattern, blended from ENV (surface) to PRIM (cracks)
