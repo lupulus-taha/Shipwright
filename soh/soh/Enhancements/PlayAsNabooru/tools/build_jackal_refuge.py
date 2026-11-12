@@ -4,8 +4,9 @@
 No game data is stored in the repository: the pieces taken from the game (the dried-up oasis pit of the Desert
 Colossus, its light settings, the cracked-surface texture) are read from the player's own `oot.o2r` when this runs.
 
-The area is a first mockup: a flat patch of dry, cracked land in the late afternoon, the oasis pit on the right and
-the placeholder of a new dungeon (a box with a row of pillars) on the left.
+The area is a first mockup: a flat patch of dry, cracked land in the afternoon, the oasis pit on the right and
+the placeholder of a new dungeon (a box with a row of pillars) on the left. Its title card is set in the game's own
+lettering, cut from other places' cards.
 
 usage: build_jackal_refuge.py [--oot x64/Debug/oot.o2r] [--out x64/Debug/mods/jackal_refuge.o2r]
 """
@@ -38,7 +39,7 @@ PILLARS = [(BOX[2] + PILLAR_RADIUS - 20, z) for z in (-1000, -600, -200, 200)]  
 SPAWN = (100, 0, 1900)
 SPAWN_YAW = 0x8000  # facing north: dungeon to the left, pit to the right
 
-TIME = (17, 20)  # late afternoon; time stands still here
+TIME = (15, 50)  # time stands still here (the sky only changes to sunset at 17:00)
 
 # ground colours: the texture is a greyscale crack pattern, blended from ENV (surface) to PRIM (cracks)
 GROUND_SURFACE = (240, 210, 162)
@@ -54,6 +55,20 @@ COLOSSUS_ROOM = "scenes/shared/spot11_scene/spot11_room_0"
 CRACKS_SOURCE = "scenes/shared/hylia_labo_scene/hylia_labo_sceneTex_010090"
 CRACKS_TEX = SCENE + "sceneCrackedEarthTex"
 CRACKS_TEX_SIZE = 32
+
+# title card: every letter of the name, as (place card it is cut from, which of its letters, gap after it)
+CARD = "textures/jackal_refuge/gJackalRefugeTitleCard%sTex"
+CARD_W, CARD_H = 144, 24
+JABU, LAKE, RANCH, TIME_CARD, FOUNTAIN, KAKARIKO = (
+    "textures/g_pn_07/gJabuJabuTitleCardENGTex", "textures/g_pn_32/gLakeHyliaTitleCardENGTex",
+    "textures/g_pn_42/gLonLonRanchTitleCardENGTex", "textures/g_pn_16/gTempleOfTimeTitleCardENGTex",
+    "textures/g_pn_34/gZorasFountainTitleCardENGTex", "textures/g_pn_28/gKakarikoVillageTitleCardENGTex")
+CARD_TEXT = [
+    (JABU, 6, 1),  # J ("Inside Jabu-Jabu's Belly" is set narrower: widened below)
+    (LAKE, 1, 1), (RANCH, 9, 1), (LAKE, 2, 0), (LAKE, 1, 1), (LAKE, 6, 6),  # a c k a l
+    (RANCH, 6, 0), (LAKE, 3, 0), (TIME_CARD, 7, 0), (FOUNTAIN, 8, 1), (KAKARIKO, 13, 1), (LAKE, 3, 0),  # R e f u g e
+]
+CARD_NARROW = {JABU: 1.4}
 
 # ---------------------------------------------------------------- resource plumbing
 M64 = (1 << 64) - 1
@@ -312,6 +327,82 @@ def cracked_earth_texture(archive):
     ranked = sorted(pixels)
     lo, hi = (ranked[len(ranked) * p // 100] for p in CRACKS_LEVELS)
     return data[:80] + bytes(min(255, max(0, round((v - lo) * 255 / (hi - lo)))) for v in pixels)
+
+
+# ---------------------------------------------------------------- title card
+def card_letters(archive, path, solid=6):
+    """the letters of a place title card, left to right, each {(x, y): intensity 0..15}"""
+    data = archive.read(path)
+    assert struct.unpack_from("<3I", data, 64) == (8, CARD_W, CARD_H), "unexpected title card format"
+    level = [[data[80 + y * CARD_W + x] >> 4 for x in range(CARD_W)] for y in range(CARD_H)]
+    owner, letters = {}, []
+    for y in range(CARD_H):
+        for x in range(CARD_W):
+            if level[y][x] >= solid and (x, y) not in owner:
+                owner[(x, y)] = len(letters)
+                letter, todo = {}, [(x, y)]
+                while todo:
+                    cx, cy = todo.pop()
+                    letter[(cx, cy)] = level[cy][cx]
+                    for n in ((nx, ny) for nx in (cx - 1, cx, cx + 1) for ny in (cy - 1, cy, cy + 1)):
+                        if 0 <= n[0] < CARD_W and 0 <= n[1] < CARD_H and level[n[1]][n[0]] >= solid and n not in owner:
+                            owner[n] = len(letters)
+                            todo.append(n)
+                letters.append(letter)
+    for y in range(CARD_H):  # the soft edge pixels belong to the letter they touch
+        for x in range(CARD_W):
+            if 0 < level[y][x] < solid:
+                near = [owner[n] for n in ((nx, ny) for nx in (x - 1, x, x + 1) for ny in (y - 1, y, y + 1)) if n in owner]
+                if near:
+                    letters[max(set(near), key=near.count)][(x, y)] = level[y][x]
+    return sorted(letters, key=lambda letter: min(x for x, _ in letter))
+
+
+def widened(letter, factor):
+    x0, x1 = min(x for x, _ in letter), max(x for x, _ in letter) + 1
+    out = {}
+    for y in {y for _, y in letter}:
+        for i in range(round((x1 - x0) * factor)):
+            at = (i + 0.5) / factor - 0.5
+            left = math.floor(at)
+            v = letter.get((x0 + left, y), 0) * (1 - at + left) + letter.get((x0 + left + 1, y), 0) * (at - left)
+            if v >= 0.5:
+                out[(x0 + i, y)] = min(15, round(v * 1.15))
+    return out
+
+
+def title_card(archive):
+    """-> the card's texture: white letters (intensity) on the dark outline the game's cards have (alpha)"""
+    cards = {path: card_letters(archive, path) for path in {path for path, _, _ in CARD_TEXT}}
+    text = []
+    for path, index, gap in CARD_TEXT:
+        letter = cards[path][index]
+        text.append((widened(letter, CARD_NARROW[path]) if path in CARD_NARROW else letter, gap))
+
+    def width(letter):
+        return max(x for x, _ in letter) - min(x for x, _ in letter) + 1
+
+    at = (CARD_W - sum(width(letter) + gap for letter, gap in text) + text[-1][1]) // 2
+    assert at >= 3, "the title does not fit its card"
+    level = [[0] * CARD_W for _ in range(CARD_H)]
+    for letter, gap in text:
+        x0 = min(x for x, _ in letter)
+        for (x, y), v in letter.items():
+            level[y][at + x - x0] = max(level[y][at + x - x0], v)
+        at += width(letter) + gap
+
+    def get(grid, x, y):
+        return grid[y][x] if 0 <= x < CARD_W and 0 <= y < CARD_H else 0
+
+    # outline: the letters grown by two pixels, then softened (this reproduces the game's own cards closely)
+    disk = [(dx, dy) for dx in range(-2, 3) for dy in range(-2, 3) if dx * dx + dy * dy <= 5]
+    grown = [[max(get(level, x + dx, y + dy) for dx, dy in disk) for x in range(CARD_W)] for y in range(CARD_H)]
+    pixels = bytearray()
+    for y in range(CARD_H):
+        for x in range(CARD_W):
+            soft = sum(get(grown, x + dx, y + dy) for dx in (-1, 0, 1) for dy in (-1, 0, 1)) / 9
+            pixels.append(level[y][x] << 4 | min(15, round(soft * 1.12)))
+    return archive.read(CARD_TEXT[0][0])[:80] + bytes(pixels)
 
 
 # ---------------------------------------------------------------- geometry helpers
@@ -649,6 +740,10 @@ def build(archive):
     scene += struct.pack("<I", 0x0F) + lights
     scene += struct.pack("<I", 0x14)
     files[SCENE + "scene"] = scene
+
+    card = title_card(archive)
+    for language in ("ENG", "GER", "FRA", "JPN"):  # the game looks the card up by language
+        files[CARD % language] = card
     return files, len(ground), len(collision.polys)
 
 

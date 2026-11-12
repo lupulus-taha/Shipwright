@@ -1061,6 +1061,10 @@ void TitleCard_InitPlaceName(PlayState* play, TitleCardContext* titleCtx, void* 
         case SCENE_LON_LON_RANCH:
             texture = gLonLonRanchTitleCardENGTex;
             break;
+        case SCENE_JACKAL_REFUGE:
+            // Play as Nabooru mod: made by PlayAsNabooru/tools/build_jackal_refuge.py
+            texture = "__OTR__textures/jackal_refuge/gJackalRefugeTitleCardENGTex";
+            break;
         default:
             titleCtx->texture = NULL;
             return;
