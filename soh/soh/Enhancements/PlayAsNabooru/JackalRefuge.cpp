@@ -4,7 +4,6 @@
 // their replacements around the camera every frame (called from the scene's draw config in z_scene_table.c):
 //  - a cloudless sky with a white-hot sun (SkyDL), behind everything
 //  - the game's own lens flare and glare, when looking towards that sun
-//  - a shimmering, sky-coloured layer over the far ground: a mirage (MirageDL)
 // and tints the picture slightly warm.
 
 #include "soh/Enhancements/game-interactor/GameInteractor.h"
@@ -25,14 +24,13 @@ void JackalRefuge_Draw(PlayState* play);
 
 // Where the sun stands (as SUN_AZIMUTH / SUN_ELEVATION in build_jackal_refuge.py): degrees clockwise from north
 // (-z), and above the horizon.
-static const float SUN_AZIMUTH = -8.0f;
-static const float SUN_ELEVATION = 17.0f;
+static const float SUN_AZIMUTH = 250.0f;
+static const float SUN_ELEVATION = 40.0f;
 // The warm tint over the picture.
 static const Color_RGBA8 HEAT_TINT = { 255, 150, 40, 16 };
 
 void JackalRefuge_Draw(PlayState* play) {
     const Vec3f& eye = play->view.eye;
-    u32 frames = play->gameplayFrames;
 
     OPEN_DISPS(play->state.gfxCtx);
 
@@ -40,14 +38,6 @@ void JackalRefuge_Draw(PlayState* play) {
     Matrix_Translate(eye.x, eye.y, eye.z, MTXMODE_NEW);
     gSPMatrix(POLY_OPA_DISP++, MATRIX_NEWMTX(play->state.gfxCtx), G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_MODELVIEW);
     gSPDisplayList(POLY_OPA_DISP++, JACKAL_REFUGE_DL("SkyDL"));
-
-    // mirage: two layers of its texture drift against each other
-    Matrix_Translate(eye.x, 0.0f, eye.z, MTXMODE_NEW);
-    gSPSegment(POLY_XLU_DISP++, 0x08,
-               (uintptr_t)Gfx_TwoTexScroll(play->state.gfxCtx, 0, frames % 128, (frames * 2) % 128, 32, 32, 1,
-                                           127 - (frames % 128), (frames * 3) % 128, 32, 32));
-    gSPMatrix(POLY_XLU_DISP++, MATRIX_NEWMTX(play->state.gfxCtx), G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_MODELVIEW);
-    gSPDisplayList(POLY_XLU_DISP++, JACKAL_REFUGE_DL("MirageDL"));
 
     CLOSE_DISPS(play->state.gfxCtx);
 

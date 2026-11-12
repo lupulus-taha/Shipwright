@@ -5,8 +5,7 @@ No game data is stored in the repository: the pieces taken from the game (the dr
 Colossus, the cracked-surface texture, title card lettering) are read from the player's own `oot.o2r` when this runs.
 
 The place is scorching: instead of the game's sky there is a cloudless one with a white-hot sun (SkyDL, drawn around
-the camera by JackalRefuge.cpp), the light is harsh, the distance fades into bright haze, and the far ground shimmers
-like water (MirageDL, also drawn around the camera).
+the camera by JackalRefuge.cpp), the light is harsh and the distance fades into bright haze.
 
 The area is a first mockup: a flat patch of dry, cracked land in the afternoon, the oasis pit on the right and
 the placeholder of a new dungeon (a box with a row of pillars) on the left. Its title card is set in the game's own
@@ -23,6 +22,8 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[5]
 
 # ---------------------------------------------------------------- layout (game units; north is -z, Nabooru ~60 tall)
+# The player arrives in the north looking south: dungeon on the left (east), pit on the right (west), and the
+# afternoon sun ahead to the right.
 SCENE = "scenes/shared/jackal_refuge_scene/jackal_refuge_"
 
 TILE = 160  # world size of one repetition of the ground texture
@@ -31,22 +32,23 @@ FINE_HALF = 4800  # the ground is made of CELL squares up to here...
 FAR_CELL, FAR_HALF = 3200, 30400  # ...and of bigger ones out to well beyond the draw distance, at any screen width
 WALL = 3200  # invisible walls around the playable part
 
-PIT_CENTER = (1600, 0)  # x, z of the middle of the pit
-PIT_BLOCK = (800, -800, 2400, 800)  # ground squares replaced by the pit and the ground fitted around it
+PIT_CENTER = (-1600, 0)  # x, z of the middle of the pit
+PIT_BLOCK = (-2400, -800, -800, 800)  # ground squares replaced by the pit and the ground fitted around it
 PIT_RIM_LEVEL = 40  # height above the old water level at which the pit's uneven rim is flattened into the ground
 
-BOX = (-2400, -1200, -800, 400)  # dungeon main building: x0, z0, x1, z1
+BOX = (800, -400, 2400, 1200)  # dungeon main building: x0, z0, x1, z1
 BOX_HEIGHT = 1000
 PILLAR_RADIUS, PILLAR_HEIGHT, PILLAR_SIDES = 130, 940, 16
-PILLARS = [(BOX[2] + PILLAR_RADIUS - 20, z) for z in (-1000, -600, -200, 200)]  # along the building's east face
+PILLARS = [(BOX[0] - PILLAR_RADIUS + 20, z) for z in (1000, 600, 200, -200)]  # along the building's west face
 
-SPAWN = (100, 0, 1900)
-SPAWN_YAW = 0x8000  # facing north: dungeon to the left, pit to the right
+SPAWN = (-100, 0, -1900)
+SPAWN_YAW = 0  # facing south: dungeon to the left, pit to the right
 
 TIME = (15, 50)  # time stands still here
 
 # --- scorching atmosphere
-SUN_AZIMUTH, SUN_ELEVATION = -8, 17  # degrees: clockwise from north, above the horizon (keep JackalRefuge.cpp in step)
+# where the sun stands at 15:50 in a desert summer: west-southwest, well up (keep JackalRefuge.cpp in step)
+SUN_AZIMUTH, SUN_ELEVATION = 250, 40  # degrees: clockwise from north, above the horizon
 SKY_RADIUS = 4000  # the sky is drawn around the camera, behind everything
 HAZE = (255, 238, 200)  # horizon and distance haze
 # sky colours by elevation in degrees, from below the horizon up to the zenith
@@ -60,9 +62,6 @@ AMBIENT_LIGHT = (138, 124, 106)
 BOUNCE_LIGHT = (64, 52, 36)  # off the ground, from below
 HAZE_START = 995  # the game's fog "near" value (0..1000): 995 starts the haze about 2000 units away
 DRAW_DISTANCE = 12800
-# mirage: (distance from the camera, opacity) of the shimmering layer just above the far ground
-MIRAGE = [(1500, 0), (2600, 150), (5000, 225), (11500, 255)]
-MIRAGE_COLOR = (226, 238, 255)  # the low sky it "reflects"
 
 # ground colours: the texture is a greyscale crack pattern, blended from ENV (surface) to PRIM (cracks)
 GROUND_SURFACE = (240, 210, 162)
@@ -92,7 +91,6 @@ CARD_TEXT = [
     (RANCH, 6, 0), (LAKE, 3, 0), (TIME_CARD, 7, 0), (FOUNTAIN, 8, 1), (KAKARIKO, 13, 1), (LAKE, 3, 0),  # R e f u g e
 ]
 CARD_NARROW = {JABU: 1.4}
-SHIMMER_TEX = "objects/gameplay_keep/gEffUnknown10Tex"  # soft greyscale blobs, 32x32
 
 # ---------------------------------------------------------------- resource plumbing
 M64 = (1 << 64) - 1
@@ -166,7 +164,6 @@ G_CULL_BACK, G_FOG, G_LIGHTING, G_TEXTURE_GEN, G_TEXTURE_GEN_LINEAR = 0x400, 0x1
 # colour combiner inputs
 CC_COMBINED, CC_TEXEL0, CC_PRIMITIVE, CC_SHADE, CC_ENVIRONMENT = 0, 1, 3, 4, 5
 G_ZBUFFER, G_CULL_BOTH = 0x1, 0x600
-CC_TEXEL1 = 2
 PIPESYNC = (G_RDPPIPESYNC << 24, 0, None)
 
 
@@ -426,45 +423,6 @@ def sky():
     return [(setup + [render_mode(0x0F0A4000)], dome),  # opaque, no depth
             ([PIPESYNC, render_mode(0x00504240)], sun),  # blended over the sky, no depth
             (restore, [])]
-
-
-def mirage():
-    """rings around the camera just above the ground: sky-coloured, more opaque with distance, and broken up by two
-    layers of a blobby texture that JackalRefuge.cpp slides against each other (through segment 8)"""
-    sides, size, fmt_i = 32, 32, 4
-    tex = crc64(SHIMMER_TEX)
-    mask = size.bit_length() - 1
-    tile = mask << 14 | mask << 4
-
-    def load(render_tile, tmem):
-        return [
-            (G_SETTIMG_OTR << 24 | fmt_i << 21 | 2 << 19, 0, (tex >> 32, tex & 0xFFFFFFFF)),
-            (G_SETTILE << 24 | fmt_i << 21 | 2 << 19 | tmem, 7 << 24 | tile, None),
-            (G_RDPLOADSYNC << 24, 0, None),
-            (G_LOADBLOCK << 24, 7 << 24 | (size * size // 2 - 1) << 12 | (2048 + size // 8 - 1) // (size // 8), None),
-            PIPESYNC,
-            (G_SETTILE << 24 | fmt_i << 21 | 1 << 19 | (size // 8) << 9 | tmem, render_tile << 24 | tile, None),
-            (G_SETTILESIZE << 24, render_tile << 24 | (size - 1) << 14 | (size - 1) << 2, None),
-        ]
-
-    material = ([PIPESYNC, (G_GEOMETRYMODE << 24 | (~UNLIT & 0xFFFFFF), 0, None), (0xE3001001, 0, None),
-                 (G_TEXTURE << 24 | 2, 0xFFFFFFFF, None)] + load(0, 0) + load(1, 0x100) + [
-        (G_DL << 24, 0x08000001, None),  # this frame's scroll of both layers
-        combine((None, None, None, CC_PRIMITIVE), (CC_TEXEL0, None, CC_TEXEL1, None),
-                (None, None, None, CC_COMBINED), (CC_COMBINED, None, CC_SHADE, None)),
-        render_mode(0x00504A50),  # blended, depth-tested, not written to the depth buffer
-        color(G_SETPRIMCOLOR, MIRAGE_COLOR),
-    ])
-    tris = []
-    for (r0, a0), (r1, a1) in zip(MIRAGE, MIRAGE[1:]):
-        for i in range(sides):
-            def corner(k, r, alpha):
-                a = 2 * math.pi * (i + k) / sides
-                # the texture is stretched sideways: streaks, as seen from the middle
-                return flat_vertex((r * math.sin(a), 3, r * math.cos(a)), (255, 255, 255), alpha, (k * 2048, round(r * 2.4)))
-            a, b, c, d = corner(0, r0, a0), corner(1, r0, a0), corner(1, r1, a1), corner(0, r1, a1)
-            tris += [(a, b, c), (a, c, d)]
-    return [(material, tris)]
 
 
 # ---------------------------------------------------------------- title card
@@ -871,14 +829,13 @@ def build(archive):
     scene += struct.pack("<I", 0x03) + string(SCENE + "sceneCollisionHeader")
     scene += struct.pack("<II2b", 0x06, 1, 0, 0)  # entrance 0: spawn 0, room 0
     scene += struct.pack("<Ibh", 0x07, 1, 2)  # overworld Navi hints, gameplay_field_keep
-    scene += struct.pack("<IIH6hH", 0x00, 1, 0, *SPAWN, 0, SPAWN_YAW - 0x10000, 0, 0x0FFF)
+    scene += struct.pack("<IIH6hH", 0x00, 1, 0, *SPAWN, 0, (SPAWN_YAW + 0x8000) % 0x10000 - 0x8000, 0, 0x0FFF)
     scene += struct.pack("<I4b", 0x11, 0, 1, 0, 0)  # the open sky
     scene += struct.pack("<I", 0x0F) + light_settings()
     scene += struct.pack("<I", 0x14)
     files[SCENE + "scene"] = scene
 
     files.update(write_dl(SCENE + "SkyDL", sky()))
-    files.update(write_dl(SCENE + "MirageDL", mirage()))
 
     card = title_card(archive)
     for language in ("ENG", "GER", "FRA", "JPN"):  # the game looks the card up by language
