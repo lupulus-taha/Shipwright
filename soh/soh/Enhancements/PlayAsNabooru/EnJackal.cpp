@@ -9,10 +9,11 @@
 // whether she is honoured by jackals (a flag of the save file, NabooruSave.h; not on a new file):
 //  - Not honoured, the jackals are enemies, and hunt as a pack. The first to notice her stops, stares and howls; the
 //    howl makes the rest of the pack stop and look too (only one howls). When she comes near one of them, or hurts
-//    one, it turns on her and the alarm goes through the pack: the others nearby join in. A few at a time come at
-//    her: they run up, snarl, leap at her to bite, dart aside and come again, and after a few bites make way for
-//    another. The rest circle her at a distance, waiting their turn (one she corners bites anyway). Each dies of a
-//    few blows. They give up when she gets away from them.
+//    one, it turns on her and the alarm goes through the pack: the others nearby join in. They come at her in waves:
+//    a few at a time run up, snarl, leap at her to bite, dart aside and come again, and after a few bites make way
+//    for another. The rest circle her at a distance, waiting their turn (one she corners bites anyway). After a few
+//    leaps the wave is over: they all fall back and circle her for a moment before the next. Each dies of a few
+//    blows. They give up when she gets away from them.
 //  - Honoured, they are only curious: they run up, keep a few steps away and watch her, and back off when approached.
 //    They never attack and cannot be hurt.
 //
@@ -132,6 +133,8 @@ static const f32 HUNT_RANGE = 1300.0f;  // hunting her, it gives up when she get
 static const f32 TERRITORY = 2200.0f;   // ...or she leaves its territory: this far around its home
 static const f32 TERRITORY_EDGE = 300.0f; // it does not turn on her this near the edge of its territory
 static const s16 GIVE_UP_TIME = 5 * 20; // having given up, it ignores her (and the pack) for this many frames
+static const s16 WAVE_LEAPS = 3;        // a wave of attacks is over after this many leaps (and up to 2 more)...
+static const s16 WAVE_PAUSE = 2 * 20;   // ...and the next comes this many frames after the last attacker is done
 
 enum JackalDamageEffect { JACKAL_DMGEFF_NONE, JACKAL_DMGEFF_STUN };
 
@@ -289,9 +292,11 @@ struct EnJackal {
     f32 spread;     // how much farther than the others it keeps from the player (watching, or circling her)
     s16 circleDir;  // which way round her it circles: 1 or -1
     bool pausing;   // (circling) standing still for a moment
+    s16 circleTime; // (circling) frames it has been at it
     s16 attacks;    // its turn: bites it has made, and how many it makes before it makes way for another
     s16 turnLength;
-    s16 callTimer;  // frames until it answers the pack's howl or alarm, -1 if it has not heard one
+    s32 turnWave;   // the wave of the pack's it last had a turn in
+    s16 callTimer; // frames until it answers the pack's howl or alarm, -1 if it has not heard one
     s16 giveUpTimer; // frames it still ignores her for, having given up on her
 };
 
@@ -361,12 +366,25 @@ struct JackalPack {
     s16 leapTimer;  // frames until the next may leap
     s16 turnTimer;  // frames until the next may take a turn
     s16 barkGap;    // frames until the next may bark (so that they do not all bark at once)
+    // They come at her in waves: a wave is over after a few leaps, and once the last of its attackers is done, all
+    // circle her for WAVE_PAUSE frames before the next.
+    s32 wave;       // which wave this is
+    s16 waveLeft;   // leaps the wave has left (0: it is over, they are circling)
+    s16 pauseTimer; // over: frames until the next wave, from when none of them is attacking any more
 };
 
 static JackalPack sPack;
 static int sActorId = -1;
 
+// How far back in the line for a turn it is put for having had one in this wave or the last (the others go first).
+static f32 Pack_LinePlace(EnJackal* member) {
+    return member->actor.xzDistToPlayer + ((member->turnWave >= sPack.wave - 1) ? 500.0f : 0.0f);
+}
+
 static void Pack_Gather(PlayState* play) {
+    s32 hostile = 0;
+    s32 attacking = 0; // running in, snarling or leaping (darting away after a leap, it is done)
+
     if (sPack.frame == play->gameplayFrames) {
         return;
     }
@@ -386,12 +404,18 @@ static void Pack_Gather(PlayState* play) {
         if (member->honoured || member->action == EnJackal_Die) {
             continue;
         }
+        if (EnJackal_IsHostile(member)) {
+            hostile++;
+        }
         if (EnJackal_IsEngaged(member)) {
             sPack.engaged++;
+            if (member->action != EnJackal_Dart) {
+                attacking++;
+            }
         }
         if (member->action == EnJackal_Circle) {
             sPack.waiting++;
-            if (sPack.nextInLine == NULL || actor->xzDistToPlayer < sPack.nextInLine->actor.xzDistToPlayer) {
+            if (sPack.nextInLine == NULL || Pack_LinePlace(member) < Pack_LinePlace(sPack.nextInLine)) {
                 sPack.nextInLine = member;
             }
         }
@@ -408,6 +432,25 @@ static void Pack_Gather(PlayState* play) {
     DECR(sPack.leapTimer);
     DECR(sPack.turnTimer);
     DECR(sPack.barkGap);
+
+    if (hostile == 0) {
+        // at peace: the first wave is ready for when they turn on her
+        sPack.waveLeft = WAVE_LEAPS + (s16)Rand_ZeroFloat(2.99f);
+        sPack.pauseTimer = 0;
+    } else if (sPack.waveLeft == 0) {
+        if (attacking > 0) {
+            sPack.pauseTimer = WAVE_PAUSE;
+        } else if (DECR(sPack.pauseTimer) == 0) {
+            sPack.wave++;
+            sPack.waveLeft = WAVE_LEAPS + (s16)Rand_ZeroFloat(2.99f);
+        }
+    }
+}
+
+// Whether the pack leaves room for another to take a turn: not too many at her already, and the wave not about to be
+// over (each that comes at her leaps at least once).
+static bool Pack_TurnFree() {
+    return sPack.engaged < MIN(MAX_ENGAGED, sPack.waveLeft);
 }
 
 // How near the nearest member that has turned on the player is (FLT_MAX if none has).
@@ -434,6 +477,7 @@ static void EnJackal_TakeTurn(EnJackal* self) {
     }
     sPack.engaged++;
     sPack.turnTimer = 15 + (s16)Rand_ZeroFloat(20.0f);
+    self->turnWave = sPack.wave;
     self->attacks = 0;
     self->turnLength = 1 + (s16)Rand_ZeroFloat(2.99f);
 }
@@ -643,7 +687,7 @@ static bool EnJackal_LostPlayer(EnJackal* self, PlayState* play) {
 // After her: it comes at her if the pack leaves it a turn, or else circles her. Returns whether it has a turn.
 // `makeWay`: it has just had one, so it lets one that is waiting go first.
 static bool EnJackal_Hunt(EnJackal* self, bool makeWay) {
-    if (sPack.engaged < MAX_ENGAGED && !(makeWay && sPack.waiting > 0)) {
+    if (Pack_TurnFree() && !(makeWay && sPack.waiting > 0)) {
         EnJackal_TakeTurn(self);
         EnJackal_SetupPursue(self);
         return true;
@@ -702,6 +746,8 @@ static void EnJackal_Pursue(EnJackal* self, PlayState* play) {
     EnJackal_MoveTowards(self, &player->actor.world.pos, RUN_SPEED, 0.9f);
     if (EnJackal_LostPlayer(self, play)) {
         EnJackal_SetupGoHome(self);
+    } else if (sPack.waveLeft == 0) {
+        EnJackal_EndTurn(self); // the wave is over
     } else if (self->actor.xzDistToPlayer < LEAP_RANGE && ABS(off) < 0x2000) {
         EnJackal_SetupThreaten(self, 8 + (s16)Rand_ZeroFloat(16.0f));
     }
@@ -725,6 +771,10 @@ static void EnJackal_SetupAttack(EnJackal* self) {
 static void EnJackal_Threaten(EnJackal* self, PlayState* play) {
     EnJackal_Stop(self, 1.5f);
     EnJackal_FacePlayer(self, 0x400, 0xA00);
+    if (sPack.waveLeft == 0 && self->actor.xzDistToPlayer > CLOSE_RANGE + 15.0f) {
+        EnJackal_EndTurn(self); // the wave is over (unless she is right on top of it)
+        return;
+    }
     if (self->actor.xzDistToPlayer > PURSUE_RANGE) {
         EnJackal_SetupPursue(self);
         return;
@@ -757,6 +807,7 @@ static void EnJackal_Attack(EnJackal* self, PlayState* play) {
             self->actor.velocity.y = 4.2f;
             self->barks = 0;
             sPack.airborne++;
+            sPack.waveLeft = MAX(sPack.waveLeft - 1, 0);
             EnJackal_Voice(self, JACKAL_VOICE_ATTACK);
         }
     } else if (frame > ATTACK_LAND_FRAME && (self->actor.bgCheckFlags & BGCHECKFLAG_GROUND)) {
@@ -800,8 +851,8 @@ static void EnJackal_Dart(EnJackal* self, PlayState* play) {
         EnJackal_SetupGoHome(self);
     } else if (Actor_WorldDistXZToPoint(&self->actor, &self->goal) < 30.0f || --self->timer <= 0 ||
                (self->actor.bgCheckFlags & BGCHECKFLAG_WALL)) {
-        if (self->attacks >= self->turnLength && sPack.waiting > 0) {
-            EnJackal_EndTurn(self); // its turn is over: another's
+        if (sPack.waveLeft == 0 || (self->attacks >= self->turnLength && sPack.waiting > 0)) {
+            EnJackal_EndTurn(self); // the wave is over, or its turn is: another's
         } else if (self->actor.xzDistToPlayer < LEAP_RANGE + 15.0f) {
             EnJackal_SetupThreaten(self, 10 + (s16)Rand_ZeroFloat(20.0f));
         } else {
@@ -814,6 +865,7 @@ static void EnJackal_Dart(EnJackal* self, PlayState* play) {
 static void EnJackal_SetupCircle(EnJackal* self) {
     self->stand = JACKAL_ANIM_THREAT;
     self->pausing = false;
+    self->circleTime = 0;
     self->timer = 20 + (s16)Rand_ZeroFloat(50.0f);
     self->action = EnJackal_Circle;
 }
@@ -827,13 +879,15 @@ static void EnJackal_Circle(EnJackal* self, PlayState* play) {
         EnJackal_SetupGoHome(self);
         return;
     }
-    if (self->actor.xzDistToPlayer < CLOSE_RANGE + 15.0f) {
+    self->circleTime = MIN(self->circleTime + 1, 1000);
+    // (just struck or done with its turn, it is still close to her: it first makes for the ring)
+    if (self->actor.xzDistToPlayer < CLOSE_RANGE + 15.0f && self->circleTime > 10) {
         // she has come at it: it bites, turn or no turn
         EnJackal_TakeTurn(self);
         EnJackal_SetupThreaten(self, 2);
         return;
     }
-    if (self == sPack.nextInLine && sPack.engaged < MAX_ENGAGED && sPack.turnTimer == 0) {
+    if (self == sPack.nextInLine && Pack_TurnFree() && sPack.turnTimer == 0) {
         EnJackal_TakeTurn(self);
         EnJackal_SetupPursue(self);
         return;
@@ -1051,6 +1105,7 @@ static void EnJackal_Init(Actor* thisx, PlayState* play) {
     self->honoured = PlayAsNabooru_IsHonouredByJackals();
     self->spread = Rand_ZeroFloat(70.0f);
     self->circleDir = (Rand_ZeroOne() < 0.5f) ? 1 : -1;
+    self->turnWave = -1000; // (has had none)
     EnJackal_SetupWait(self);
     sPack.frame = UINT32_MAX; // one more in the pack
 }
