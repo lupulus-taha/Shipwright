@@ -593,6 +593,32 @@ def mirror_arm(frame, nb_limbs, reflections, src_arm, dst_arm):
     return out
 
 
+def arm_elevation(frame, nb_limbs, arm):
+    """Degrees above (+) or below (-) the horizon of the line from shoulder to hand, in model space."""
+    _, P = fk(nb_limbs, frame)
+    d = P[arm[2]] - P[arm[0]]
+    return math.degrees(math.asin(np.clip(d[1] / np.linalg.norm(d), -1, 1)))
+
+
+def lower_arm(frame, nb_limbs, arm, elevation):
+    """The arm turned down at the shoulder (as a whole) until shoulder-to-hand points `elevation` degrees from the
+    horizon, keeping its direction around her."""
+    _, P = fk(nb_limbs, frame)
+    d = P[arm[2]] - P[arm[0]]
+    d = d / np.linalg.norm(d)
+    flat = np.array([d[0], 0.0, d[2]])
+    flat /= np.linalg.norm(flat)
+    e = math.radians(elevation)
+    want = flat * math.cos(e) + np.array([0, 1, 0]) * math.sin(e)
+    axis = np.cross(d, want)
+    if np.linalg.norm(axis) < 1e-9:
+        return frame
+    angle = math.degrees(math.acos(np.clip(d @ want, -1, 1)))
+    out = frame.copy()
+    rotate_world(out, nb_limbs, arm[0], axis, angle)
+    return out
+
+
 def make_bare_flip(flip, crouch, rest, nb_limbs, reflections):
     """The fighter's backflip for empty hands: the flight unchanged, then landing into a light crouch (her right
     arm mirroring her left) and rising gradually towards standing relaxed instead of in her fighting stance (the
@@ -601,6 +627,11 @@ def make_bare_flip(flip, crouch, rest, nb_limbs, reflections):
     for f, weight in BARE_FLIP_ARM_MIRROR.items():
         mirrored = mirror_arm(flip[f], nb_limbs, reflections, NB_L_ARM, NB_R_ARM)
         flip[f] = blend_frames(flip[f], mirrored, weight)
+        # her body is still rolled from the flip as she lands: relative to the ground, keep the right arm no higher
+        # than the left
+        left, right = arm_elevation(flip[f], nb_limbs, NB_L_ARM), arm_elevation(flip[f], nb_limbs, NB_R_ARM)
+        if right > left:
+            flip[f] = lower_arm(flip[f], nb_limbs, NB_R_ARM, left)
     out = flip.copy()
     out[8] = blend_frames(flip[8], crouch, 0.35)
     out[9] = blend_frames(blend_frames(flip[9], crouch, 0.75), rest, 0.35)
