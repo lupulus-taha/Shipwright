@@ -209,8 +209,8 @@ const char* LinkAnimName(const void* anim) {
     return name ? name + strlen("gPlayerAnim_link_") : nullptr;
 }
 
-// Generated animations live in a mod archive that may not be installed; checked once per path.
-bool HasAnimation(const char* path) {
+// Generated resources live in a mod archive that may not be installed; checked once per path.
+bool HasResource(const char* path) {
     static std::unordered_map<const char*, bool> sCache;
     auto it = sCache.find(path);
     if (it == sCache.end()) {
@@ -238,7 +238,7 @@ const Move* MatchRule(const void* linkAnim) {
             }
         }
     }
-    if (result != nullptr && !HasAnimation(result->anim)) {
+    if (result != nullptr && !HasResource(result->anim)) {
         result = nullptr;
     }
     sCache.emplace(linkAnim, result);
@@ -348,7 +348,7 @@ f32 LastFrame(const Move* move) {
 
 // the animation for a move, armed or empty-handed
 const char* AnimFor(const Move* move) {
-    return (!sShowSwords && move->bareAnim != nullptr && HasAnimation(move->bareAnim)) ? move->bareAnim : move->anim;
+    return (!sShowSwords && move->bareAnim != nullptr && HasResource(move->bareAnim)) ? move->bareAnim : move->anim;
 }
 
 f32 EndFrame(const Move* move) {
@@ -532,7 +532,7 @@ const Move* Armed(const Move* move) {
                         : (move == &kRun)     ? &kArmedRun
                         : (move == &kRunBack) ? &kArmedRunBack
                                               : nullptr;
-    return (sShowSwords && armed != nullptr && HasAnimation(armed->anim)) ? armed : move;
+    return (sShowSwords && armed != nullptr && HasResource(armed->anim)) ? armed : move;
 }
 
 f32 sStride = 1.0f; // her stride, as a fraction of the walk's (or sidestep's) own, set by LocomotionMove
@@ -560,11 +560,11 @@ const Move* LocomotionMove(Player* player, f32* loopSpeed, bool* legsOnly) {
         if (player->stateFlags1 & PLAYER_STATE1_TALKING) {
             return &kHips;
         }
-        if (IsTargeting(player) && sShowSwords && HasAnimation(kStance.anim)) {
+        if (IsTargeting(player) && sShowSwords && HasResource(kStance.anim)) {
             return &kStance;
         }
         const Move* idle = sShowSwords ? &kIdleSwords : &kIdle;
-        return HasAnimation(idle->anim) ? idle : &kHips;
+        return HasResource(idle->anim) ? idle : &kHips;
     }
 
     // Without Z-targeting she faces where she goes, except when sliding backwards (e.g. out of a backflip).
@@ -574,22 +574,22 @@ const Move* LocomotionMove(Player* player, f32* loopSpeed, bool* legsOnly) {
     }
     switch (dir) {
         case Dir::Forward:
-            if (speed > kRunThreshold && HasAnimation(kRun.anim)) {
+            if (speed > kRunThreshold && HasResource(kRun.anim)) {
                 *loopSpeed = CLAMP(speed / kRunReferenceSpeed, 0.75f, 3.0f);
                 return &kRun;
             }
-            if (IsTargeting(player) && sShowSwords && HasAnimation(kFightWalk.anim)) {
+            if (IsTargeting(player) && sShowSwords && HasResource(kFightWalk.anim)) {
                 *loopSpeed = CLAMP(speed / kFightWalkReferenceSpeed, 0.5f, 2.5f);
                 return &kFightWalk;
             }
             *loopSpeed = Cadence(speed, kWalkReferenceSpeed);
             return &kWalk;
         case Dir::Back:
-            if (speed > kRunThreshold && HasAnimation(kRunBack.anim)) {
+            if (speed > kRunThreshold && HasResource(kRunBack.anim)) {
                 *loopSpeed = -CLAMP(speed / kRunReferenceSpeed, 0.75f, 3.0f);
                 return &kRunBack;
             }
-            if (sShowSwords && HasAnimation(kFightWalk.anim)) {
+            if (sShowSwords && HasResource(kFightWalk.anim)) {
                 *loopSpeed = -CLAMP(speed / kFightWalkReferenceSpeed, 0.5f, 2.5f);
                 return &kFightWalk;
             }
@@ -597,14 +597,14 @@ const Move* LocomotionMove(Player* player, f32* loopSpeed, bool* legsOnly) {
             return &kWalk;
         case Dir::Left:
         case Dir::Right:
-            if (!HasAnimation(kStrafe.anim)) {
+            if (!HasResource(kStrafe.anim)) {
                 *loopSpeed = Cadence(speed, kWalkReferenceSpeed);
                 return &kWalk;
             }
             // the fighter's circling steps go to her left when played backwards; right is the mirrored copy
             *loopSpeed = -Cadence(speed, kStrafeReferenceSpeed);
             *legsOnly = !sShowSwords;
-            return (dir == Dir::Right && HasAnimation(kStrafeMirror.anim)) ? &kStrafeMirror : &kStrafe;
+            return (dir == Dir::Right && HasResource(kStrafeMirror.anim)) ? &kStrafeMirror : &kStrafe;
     }
     return &kIdle;
 }
@@ -670,7 +670,7 @@ const Vec3s* MeanPose(const char* anim) {
 
 // Shorter steps: every joint moves only `stride` of the way from the cycle's average pose to where the cycle has it.
 void ShortenStride(Layer& layer, f32 stride) {
-    if (!HasAnimation(layer.anim)) {
+    if (!HasResource(layer.anim)) {
         return;
     }
     const Vec3s* mean = MeanPose(layer.anim);
@@ -689,7 +689,7 @@ bool StrafeUpright(Vec3f* rootUp, Vec3f* spine) {
         sDone = true;
         Vec3f up = { 0.0f, 0.0f, 0.0f }, sp = { 0.0f, 0.0f, 0.0f };
         for (const Move* move : { &kStrafe, &kStrafeMirror }) {
-            if (!HasAnimation(move->anim)) {
+            if (!HasResource(move->anim)) {
                 return false;
             }
             s32 frames = Animation_GetLastFrame((AnimationHeader*)move->anim) + 1;
@@ -823,8 +823,8 @@ void Nabooru_OnPlayerUpdate() {
     if (body == &kTired && sShowSwords) {
         body = &kTiredSwords;
     }
-    if (body == &kLandShort && sShowSwords && IsTargeting(player) && HasAnimation(kLandShortStance.anim) &&
-        HasAnimation(kStance.anim)) {
+    if (body == &kLandShort && sShowSwords && IsTargeting(player) && HasResource(kLandShortStance.anim) &&
+        HasResource(kStance.anim)) {
         body = &kLandShortStance;
     }
 
@@ -835,7 +835,7 @@ void Nabooru_OnPlayerUpdate() {
         sLandingFrames = 0;
     } else if (sInAir) {
         sInAir = false;
-        if (sAirPeakY - player->actor.world.pos.y > kLongDrop && moving && HasAnimation(kLandQuick.anim)) {
+        if (sAirPeakY - player->actor.world.pos.y > kLongDrop && moving && HasResource(kLandQuick.anim)) {
             sLandingFrames = kLandQuickFrames;
         }
     }
@@ -851,25 +851,25 @@ void Nabooru_OnPlayerUpdate() {
         bool legsOnly = false;
         body = Locomotion(player, &bodySpeed, &legsOnly);
         stride = sStride;
-        if (shielding && HasAnimation(kBlock.anim)) {
+        if (shielding && HasResource(kBlock.anim)) {
             if (moving) {
                 overlay = &kBlock; // guard up while walking: her arms only, so she still looks ahead
                 sMask = Mask::Arms;
             } else if (IsTargeting(player)) {
                 body = &kBlock;
             } else {
-                body = HasAnimation(kKneel.anim) ? &kKneel : &kBlock; // Link crouches behind his shield
+                body = HasResource(kKneel.anim) ? &kKneel : &kBlock; // Link crouches behind his shield
                 overlay = &kBlock;
                 sMask = Mask::Upper;
             }
         } else if (legsOnly) {
             // empty-handed: her relaxed upper body over the sideways steps
-            overlay = HasAnimation(kIdle.anim) ? &kIdle : &kHips;
+            overlay = HasResource(kIdle.anim) ? &kIdle : &kHips;
             sMask = Mask::Upper;
         }
         // Setting off from her folded-arms idle, her arms stay folded for a moment: a light tap of the stick doesn't
         // swing them about.
-        if (moving && !shielding && !sShowSwords && HasAnimation(kCrossedArms.anim)) {
+        if (moving && !shielding && !sShowSwords && HasResource(kCrossedArms.anim)) {
             if (sBody.move == &kCrossedArms || (sBody.move == &kFoldArms && OnceDone(sBody))) {
                 sKeepFolded = kKeepFoldedFrames;
                 startFolded = true;
@@ -884,7 +884,7 @@ void Nabooru_OnPlayerUpdate() {
         }
     } else {
         sKeepFolded = 0;
-        if (IsAttack(body) && stepDistance > kAttackStepThreshold && HasAnimation(kFightWalk.anim)) {
+        if (IsAttack(body) && stepDistance > kAttackStepThreshold && HasResource(kFightWalk.anim)) {
             // Link's slashes carry him forward: let her legs step instead of sliding.
             overlay = &kFightWalk;
             overlaySpeed = CLAMP(stepDistance / kFightWalkReferenceSpeed, 0.5f, 2.5f);
@@ -893,7 +893,7 @@ void Nabooru_OnPlayerUpdate() {
     }
 
     // Standing still empty-handed, she folds her arms (unless they still are: she only tapped the stick).
-    if (body == &kIdle && overlay == nullptr && HasAnimation(kFoldArms.anim) && HasAnimation(kCrossedArms.anim)) {
+    if (body == &kIdle && overlay == nullptr && HasResource(kFoldArms.anim) && HasResource(kCrossedArms.anim)) {
         bool folded = sBody.move == &kCrossedArms || (sBody.move == &kFoldArms && OnceDone(sBody)) ||
                       (sOverlay.move == &kCrossedArms && sOverlayWeight >= 1.0f);
         body = folded ? &kCrossedArms : &kFoldArms;
@@ -901,7 +901,7 @@ void Nabooru_OnPlayerUpdate() {
     f32 foldedFrame = (sBody.move == &kCrossedArms) ? sBody.skel.curFrame : 0.0f;
 
     // The fighter's moves end in her fighting stance; with empty hands, let her arms come down once she's landed.
-    if (!sShowSwords && overlay == nullptr && HasAnimation(kIdle.anim)) {
+    if (!sShowSwords && overlay == nullptr && HasResource(kIdle.anim)) {
         bool late = body == &kLand && sBody.move == body && sBody.skel.curFrame >= 9.0f;
         if (late) {
             overlay = &kIdle;
@@ -1082,6 +1082,21 @@ void SwapItemIcons(bool hers) {
     }
 }
 
+// Their names on the pause screen (English; other languages keep Link's). On the equipment screen the Biggoron Sword
+// is named as ITEM_HEART_PIECE_2 and the (unbroken) Giant's Knife as ITEM_SWORD_BGS.
+const char* ItemName(u32 item) {
+    static const char* kScimitars = "__OTR__textures/play_as_nabooru/gPlayAsNabooruScimitarsNameENGTex";
+    static const char* kSpear = "__OTR__textures/play_as_nabooru/gPlayAsNabooruSpearNameENGTex";
+    if (gSaveContext.language != LANGUAGE_ENG || gPlayState == nullptr) {
+        return nullptr;
+    }
+    bool equipment = gPlayState->pauseCtx.pageIndex == PAUSE_EQUIP;
+    const char* name = (item == ITEM_SWORD_MASTER)                                              ? kScimitars
+                       : (item == ITEM_SWORD_BGS || (equipment && item == ITEM_HEART_PIECE_2)) ? kSpear
+                                                                                               : nullptr;
+    return (name != nullptr && HasResource(name)) ? name : nullptr;
+}
+
 void Nabooru_OnPlayerDraw(bool isFirstPerson) {
     if (isFirstPerson || !sBody.ready || gPlayState == nullptr) {
         return;
@@ -1118,6 +1133,14 @@ void RegisterPlayAsNabooru() {
         *dList = NULL;
     });
 
+    COND_VB_SHOULD(VB_DRAW_CUSTOM_ITEM_NAME, enabled, {
+        u32 item = va_arg(args, u32);
+        if (const char* name = ItemName(item)) {
+            *should = true;
+            memcpy(gPlayState->pauseCtx.nameSegment, name, strlen(name) + 1);
+        }
+    });
+
     // Her voice instead of Link's, where she has a counterpart.
     COND_VB_SHOULD(VB_PLAY_SFX, enabled, {
         u16* sfxId = va_arg(args, u16*);
@@ -1132,7 +1155,7 @@ static RegisterShipInitFunc initFunc(RegisterPlayAsNabooru, { CVAR_PLAY_AS_NABOO
 
 // Rotation of joint `joint` at `frame` of a (generated) animation resource.
 bool SampleJointRotation(const char* path, s32 frame, s32 joint, Vec3s* out) {
-    if (path == nullptr || !HasAnimation(path)) {
+    if (path == nullptr || !HasResource(path)) {
         return false;
     }
     AnimationHeader* anim = (AnimationHeader*)ResourceMgr_LoadAnimByName(path);

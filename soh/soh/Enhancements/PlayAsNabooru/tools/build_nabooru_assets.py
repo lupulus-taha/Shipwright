@@ -25,6 +25,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent))
 import icons  # noqa: E402
+import names  # noqa: E402
 import ootanim  # noqa: E402
 from ootanim import fk, parse_anim, parse_skeleton, rot_zyx, zyx_from_rot  # noqa: E402
 
@@ -135,6 +136,7 @@ RUN_CORE_SWAY_GAIN = {NB_TORSO: 2.3, NB_HEAD: 1.0}
 RESOURCE_HEADER = bytes.fromhex("00000000" "4d4e414f" "00000000" "efbeaddeefbeadde") + bytes(64 - 20)
 TEXTURE_HEADER = bytes.fromhex("00000000" "5845544f" "00000000" "efbeaddeefbeadde") + bytes(64 - 20)
 TEXTURE_RGBA32 = 1
+TEXTURE_IA4 = 7
 
 
 def encode_texture(rgba):
@@ -813,6 +815,13 @@ def main():
         print(f"gPlayAsNabooru{name}IconTex: {icons.ICON_SIZE}x{icons.ICON_SIZE} item icon")
     if args.icons_preview:
         icons.preview(list(item_icons.values()), args.icons_preview)
+    # and their names on the pause screen, in the game's lettering (English)
+    lettering = names.Lettering(args.decomp / "extracted" / args.version / "assets" / "textures" / "item_name_static")
+    for name, text in {"Scimitars": "Twin Scimitars", "Spear": "Gerudo Spear"}.items():
+        pixels = names.to_ia4(*lettering.render(text))
+        resources[f"textures/play_as_nabooru/gPlayAsNabooru{name}NameENGTex"] = (
+            TEXTURE_HEADER + struct.pack("<4I", TEXTURE_IA4, names.WIDTH, names.HEIGHT, len(pixels)) + pixels)
+        print(f"gPlayAsNabooru{name}NameENGTex: \"{text}\"")
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(args.out, "w", zipfile.ZIP_DEFLATED) as z:
