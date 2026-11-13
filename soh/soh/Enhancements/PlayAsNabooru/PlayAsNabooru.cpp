@@ -252,6 +252,9 @@ constexpr f32 kWalkReferenceSpeed = 3.0f;
 constexpr f32 kRunReferenceSpeed = 4.0f;
 constexpr f32 kFightWalkReferenceSpeed = 2.0f;
 constexpr f32 kStrafeReferenceSpeed = 2.5f;
+// Below those speeds she walks (or sidesteps) with quicker, shorter steps, like Link, instead of slow full strides:
+// her step rate only drops to this fraction of the natural one at a standstill, her stride makes up the rest.
+constexpr f32 kMinCadence = 0.55f;
 constexpr f32 kMovingThreshold = 0.5f;
 constexpr f32 kRunThreshold = 4.5f;
 constexpr f32 kAttackStepThreshold = 1.0f; // Link's attacks slide him; above this, her legs step along
@@ -531,12 +534,27 @@ const Move* Armed(const Move* move) {
     return (sShowSwords && armed != nullptr && HasAnimation(armed->anim)) ? armed : move;
 }
 
+f32 sStride = 1.0f; // her stride, as a fraction of the walk's (or sidestep's) own, set by LocomotionMove
+
+// The step rate for walking at `speed` with a cycle whose natural speed is `reference`; sets sStride.
+f32 Cadence(f32 speed, f32 reference) {
+    f32 natural = speed / reference;
+    if (natural >= 1.0f) {
+        sStride = 1.0f;
+        return MIN(natural, 3.0f);
+    }
+    f32 cadence = kMinCadence + (1.0f - kMinCadence) * natural;
+    sStride = natural / cadence;
+    return cadence;
+}
+
 // Locomotion when no rule matches. Returns the move and its loop speed; `legsOnly` asks for her normal upper body
 // (used when walking sideways without her scimitars, so she doesn't hold a fighting pose with empty hands).
 const Move* LocomotionMove(Player* player, f32* loopSpeed, bool* legsOnly) {
     f32 speed = player->actor.speedXZ;
     *legsOnly = false;
     *loopSpeed = 1.0f;
+    sStride = 1.0f;
     if (speed <= kMovingThreshold) {
         if (player->stateFlags1 & PLAYER_STATE1_TALKING) {
             return &kHips;
@@ -563,7 +581,7 @@ const Move* LocomotionMove(Player* player, f32* loopSpeed, bool* legsOnly) {
                 *loopSpeed = CLAMP(speed / kFightWalkReferenceSpeed, 0.5f, 2.5f);
                 return &kFightWalk;
             }
-            *loopSpeed = CLAMP(speed / kWalkReferenceSpeed, 0.5f, 3.0f);
+            *loopSpeed = Cadence(speed, kWalkReferenceSpeed);
             return &kWalk;
         case Dir::Back:
             if (speed > kRunThreshold && HasAnimation(kRunBack.anim)) {
@@ -574,16 +592,16 @@ const Move* LocomotionMove(Player* player, f32* loopSpeed, bool* legsOnly) {
                 *loopSpeed = -CLAMP(speed / kFightWalkReferenceSpeed, 0.5f, 2.5f);
                 return &kFightWalk;
             }
-            *loopSpeed = -CLAMP(speed / kWalkReferenceSpeed, 0.5f, 3.0f);
+            *loopSpeed = -Cadence(speed, kWalkReferenceSpeed);
             return &kWalk;
         case Dir::Left:
         case Dir::Right:
             if (!HasAnimation(kStrafe.anim)) {
-                *loopSpeed = CLAMP(speed / kWalkReferenceSpeed, 0.5f, 3.0f);
+                *loopSpeed = Cadence(speed, kWalkReferenceSpeed);
                 return &kWalk;
             }
             // the fighter's circling steps go to her left when played backwards; right is the mirrored copy
-            *loopSpeed = -CLAMP(speed / kStrafeReferenceSpeed, 0.5f, 3.0f);
+            *loopSpeed = -Cadence(speed, kStrafeReferenceSpeed);
             *legsOnly = !sShowSwords;
             return (dir == Dir::Right && HasAnimation(kStrafeMirror.anim)) ? &kStrafeMirror : &kStrafe;
     }
@@ -612,6 +630,54 @@ void UpdateEyes() {
 }
 
 bool SampleJointRotation(const char* path, s32 frame, s32 joint, Vec3s* out);
+
+// The average pose of a cycle (each joint's mean rotation, the root's mean position); computed once per animation.
+const Vec3s* MeanPose(const char* anim) {
+    static std::unordered_map<const char*, std::vector<Vec3s>> sCache;
+    auto it = sCache.find(anim);
+    if (it != sCache.end()) {
+        return it->second.data();
+    }
+    std::vector<Vec3s> mean(NB_LIMB_MAX);
+    s32 frames = Animation_GetLastFrame((AnimationHeader*)anim) + 1;
+    Vec3f root = { 0.0f, 0.0f, 0.0f };
+    for (s32 j = 0; j < NB_LIMB_MAX; j++) {
+        Quat sum = { 0.0f, 0.0f, 0.0f, 0.0f }, first = { 1.0f, 0.0f, 0.0f, 0.0f };
+        for (s32 f = 0; f < frames; f++) {
+            Vec3s value;
+            SampleJointRotation(anim, f, j, &value);
+            if (j == 0) {
+                root = { root.x + value.x, root.y + value.y, root.z + value.z };
+                continue;
+            }
+            Quat q = ToQuat(value);
+            if (f == 0) {
+                first = q;
+            }
+            f32 sign = (q.w * first.w + q.x * first.x + q.y * first.y + q.z * first.z < 0.0f) ? -1.0f : 1.0f;
+            sum = { sum.w + sign * q.w, sum.x + sign * q.x, sum.y + sign * q.y, sum.z + sign * q.z };
+        }
+        if (j == 0) {
+            mean[0] = { (s16)(root.x / frames), (s16)(root.y / frames), (s16)(root.z / frames) };
+        } else {
+            f32 len = sqrtf(sum.w * sum.w + sum.x * sum.x + sum.y * sum.y + sum.z * sum.z);
+            mean[j] = ToEuler({ sum.w / len, sum.x / len, sum.y / len, sum.z / len });
+        }
+    }
+    return sCache.emplace(anim, std::move(mean)).first->second.data();
+}
+
+// Shorter steps: every joint moves only `stride` of the way from the cycle's average pose to where the cycle has it.
+void ShortenStride(Layer& layer, f32 stride) {
+    if (!HasAnimation(layer.anim)) {
+        return;
+    }
+    const Vec3s* mean = MeanPose(layer.anim);
+    MixTranslation(layer.joints[0], mean[0], 1.0f - stride);
+    for (s32 j = 1; j < NB_LIMB_MAX; j++) {
+        MixRotation(layer.joints[j], mean[j], 1.0f - stride);
+    }
+}
 
 // The fighter's sidestep (like her stance) leans to one side: hips rolled, spine tilted; mirrored for the other
 // direction. Upright = the average of the two: her hips' up direction and her spine's direction, in model space.
@@ -774,9 +840,11 @@ void Nabooru_OnPlayerUpdate() {
         sLandingFrames = 0;
     }
 
+    f32 stride = 1.0f;
     if (body == nullptr) {
         bool legsOnly = false;
         body = Locomotion(player, &bodySpeed, &legsOnly);
+        stride = sStride;
         if (shielding && HasAnimation(kBlock.anim)) {
             if (moving) {
                 overlay = &kBlock; // guard up while walking: her arms only, so she still looks ahead
@@ -845,6 +913,9 @@ void Nabooru_OnPlayerUpdate() {
         SkelAnime_Update(&sBody.skel);
     } else {
         StepLayer(sBody, player, bodySpeed);
+    }
+    if (stride < 1.0f && (body == &kWalk || body == &kArmedWalk || body == &kStrafe || body == &kStrafeMirror)) {
+        ShortenStride(sBody, stride);
     }
 
     if (startFolded) {
