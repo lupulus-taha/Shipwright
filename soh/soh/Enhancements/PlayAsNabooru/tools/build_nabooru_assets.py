@@ -24,6 +24,7 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent))
+import icons  # noqa: E402
 import ootanim  # noqa: E402
 from ootanim import fk, parse_anim, parse_skeleton, rot_zyx, zyx_from_rot  # noqa: E402
 
@@ -132,6 +133,15 @@ NB_BLANK = 15
 RUN_CORE_SWAY_GAIN = {NB_TORSO: 2.3, NB_HEAD: 1.0}
 
 RESOURCE_HEADER = bytes.fromhex("00000000" "4d4e414f" "00000000" "efbeaddeefbeadde") + bytes(64 - 20)
+TEXTURE_HEADER = bytes.fromhex("00000000" "5845544f" "00000000" "efbeaddeefbeadde") + bytes(64 - 20)
+TEXTURE_RGBA32 = 1
+
+
+def encode_texture(rgba):
+    """SoH binary texture, 32-bit RGBA."""
+    h, w = rgba.shape[:2]
+    pixels = icons.to_rgba32(rgba).tobytes()
+    return TEXTURE_HEADER + struct.pack("<4I", TEXTURE_RGBA32, w, h, len(pixels)) + pixels
 
 
 # ---------------------------------------------------------------- rotation helpers
@@ -688,6 +698,7 @@ def main():
     ap.add_argument("--decomp", type=Path, default=Path.home() / "oot")
     ap.add_argument("--version", default="pal-1.0")
     ap.add_argument("--debug-c", type=Path, help="also write decomp-style C of each animation here (for Fast64)")
+    ap.add_argument("--icons-preview", type=Path, help="also write the item icons, enlarged, to this PNG")
     args = ap.parse_args()
 
     ootanim.ASSETS = args.decomp / "extracted" / args.version / "assets" / "objects"
@@ -794,6 +805,14 @@ def main():
         sys.exit(f"mirror check failed: {err}")
     add("SidestepMirror", side_mirror, f"sidestep mirrored (max joint error {err:.2f})",
         mirror_swords(sword_tables["gPlayAsNabooruSidestepAnim"], reflections))
+
+    # item icons: her scimitars for the Master Sword, the Gerudo spear for the Biggoron Sword
+    item_icons = {"Scimitars": icons.scimitars_icon(), "Spear": icons.spear_icon()}
+    for name, icon in item_icons.items():
+        resources[f"textures/play_as_nabooru/gPlayAsNabooru{name}IconTex"] = encode_texture(icon)
+        print(f"gPlayAsNabooru{name}IconTex: {icons.ICON_SIZE}x{icons.ICON_SIZE} item icon")
+    if args.icons_preview:
+        icons.preview(list(item_icons.values()), args.icons_preview)
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(args.out, "w", zipfile.ZIP_DEFLATED) as z:

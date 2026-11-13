@@ -828,7 +828,8 @@ void KaleidoScope_DrawEquipment(PlayState* play) {
                 gSPGrayscale(POLY_OPA_DISP++, true);
             }
             if (((u32)i == 0) && (k == 2) && (gSaveContext.bgsFlag != 0)) {
-                KaleidoScope_DrawQuadTextureRGBA32(play->state.gfxCtx, gItemIconSwordBiggoronTex, 32, 32, point);
+                // (through the item icon table, which mods may change)
+                KaleidoScope_DrawQuadTextureRGBA32(play->state.gfxCtx, gItemIcons[ITEM_SWORD_BGS], 32, 32, point);
             } else if ((i == 0) && (k == 2) && (gBitFlags[bit + 1] & gSaveContext.inventory.equipment)) {
                 KaleidoScope_DrawQuadTextureRGBA32(play->state.gfxCtx, gItemIconBrokenGiantsKnifeTex, 32, 32, point);
             } else if (gBitFlags[bit] & gSaveContext.inventory.equipment) {
