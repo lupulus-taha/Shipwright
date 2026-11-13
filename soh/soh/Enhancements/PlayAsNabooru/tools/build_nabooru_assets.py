@@ -559,12 +559,12 @@ def make_low_landing(jump, rest, clearance=None):
 
 
 def make_bare_flip(flip, crouch, rest):
-    """The fighter's backflip for empty hands: the flight unchanged, then landing into a light crouch and standing up
-    relaxed instead of in her fighting stance."""
+    """The fighter's backflip for empty hands: the flight unchanged, then landing into a light crouch and rising
+    gradually towards standing relaxed instead of in her fighting stance (the game blends the rest into her idle)."""
     out = flip.copy()
     out[8] = blend_frames(flip[8], crouch, 0.35)
-    out[9] = blend_frames(flip[9], crouch, 0.75)
-    out[10] = rest
+    out[9] = blend_frames(blend_frames(flip[9], crouch, 0.75), rest, 0.35)
+    out[10] = blend_frames(crouch, rest, 0.75)
     return out
 
 

@@ -113,20 +113,21 @@ const Move kJumpSlashAir = { "JumpSlashAir", GEN(Flip), GEN_SWORDS(Flip), Mode::
 // the landing strike is quick (Link's sword hits as he lands), then she rises out of the landing crouch
 const Move kJumpSlashHit = { "JumpSlashHit", GEN(Slash), GEN_SWORDS(Slash), Mode::Once, 2, 6, 1.0f };
 const Move kJumpSlashEnd = { "JumpSlashEnd", GEN(Jump), GEN_SWORDS(Jump), Mode::Sync, 6, 16 };
-// acrobatics: Link lands his backflip about 70% into its animation
+// acrobatics: on flat ground Link touches down from his backflip at 11 of its 14 frames; the fighter's flip touches
+// down at frame 7, crouches (8) and rises (9, 10) while Link plays his landing
 const Move kBackflip = { .name = "Backflip",
                          .anim = GEN(Flip),
                          .swords = GEN_SWORDS(Flip),
                          .mode = Mode::Sync,
                          .start = 0,
-                         .end = 9,
-                         .span = 0.7f,
+                         .end = 7,
+                         .span = 0.78f,
                          .bareAnim = GEN(FlipBare) };
 const Move kBackflipEnd = { .name = "BackflipEnd",
                             .anim = GEN(Flip),
                             .swords = GEN_SWORDS(Flip),
                             .mode = Mode::Sync,
-                            .start = 9,
+                            .start = 7,
                             .end = 10,
                             .bareAnim = GEN(FlipBare) }; // empty-handed she stands up relaxed
 // jumping and falling (landings are the end of the fighter's drop-from-the-ceiling animation)
@@ -394,11 +395,12 @@ bool SetMove(Layer& layer, const Move* move) {
         return false;
     }
     f32 last = LastFrame(move);
+    // (interpolated: a move played slower than its frames, or synced to Link, would otherwise hold each frame and jump)
     if (move->mode == Mode::Loop) {
-        Animation_Change(&layer.skel, (AnimationHeader*)anim, 1.0f, 0.0f, last, ANIMMODE_LOOP, 0.0f);
+        Animation_Change(&layer.skel, (AnimationHeader*)anim, 1.0f, 0.0f, last, ANIMMODE_LOOP_INTERP, 0.0f);
     } else {
         // frames are set by hand every update
-        Animation_Change(&layer.skel, (AnimationHeader*)anim, 0.0f, move->start, last, ANIMMODE_ONCE, 0.0f);
+        Animation_Change(&layer.skel, (AnimationHeader*)anim, 0.0f, move->start, last, ANIMMODE_ONCE_INTERP, 0.0f);
     }
     layer.onceFrame = move->start;
     layer.move = move;
@@ -704,7 +706,11 @@ void Nabooru_OnPlayerUpdate() {
     }
 
     bool hadMove = sBody.move != nullptr; // nothing to blend from on her first frame
-    bool changed = SetMove(sBody, body) && hadMove;
+    // a move that carries on with the same animation where the last one stopped (a flip's flight, then its landing)
+    // needs no blending
+    bool continues = hadMove && body != sBody.move && body->mode != Mode::Loop && AnimFor(body) == sBody.anim &&
+                     fabsf(body->start - sBody.skel.curFrame) <= 1.0f;
+    bool changed = SetMove(sBody, body) && hadMove && !continues;
     if (freezeBody) {
         SkelAnime_Update(&sBody.skel);
     } else {
@@ -910,6 +916,26 @@ void PlayAsNabooru_DebugState(const char** move, float* frame) {
         sBoth = std::string(*move) + "+" + sOverlay.move->name;
         *move = sBoth.c_str();
     }
+}
+
+// For tools: how much her pose changed since the last call (once per frame): the largest joint rotation in degrees and
+// which joint, and how far the root moved (model units). Freezes show up as zeros, pops as spikes.
+void PlayAsNabooru_DebugMotion(float* maxDegrees, int* joint, float* rootMove) {
+    static Vec3s sPrev[NB_LIMB_MAX];
+    *maxDegrees = 0.0f;
+    *joint = 0;
+    for (s32 i = 1; i < NB_LIMB_MAX; i++) {
+        Quat p = ToQuat(sPrev[i]), q = ToQuat(sFinalJoints[i]);
+        f32 dot = fabsf(p.w * q.w + p.x * q.x + p.y * q.y + p.z * q.z);
+        f32 degrees = 2.0f * acosf(MIN(dot, 1.0f)) * (180.0f / (f32)M_PI);
+        if (degrees > *maxDegrees) {
+            *maxDegrees = degrees;
+            *joint = i;
+        }
+    }
+    *rootMove = sqrtf(SQ((f32)(sFinalJoints[0].x - sPrev[0].x)) + SQ((f32)(sFinalJoints[0].y - sPrev[0].y)) +
+                      SQ((f32)(sFinalJoints[0].z - sPrev[0].z)));
+    memcpy(sPrev, sFinalJoints, sizeof(sPrev));
 }
 
 // For tools: hold one frame of one of her animations (`name` as in gPlayAsNabooru<name>Anim, or a full resource

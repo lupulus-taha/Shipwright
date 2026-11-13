@@ -64,6 +64,7 @@ extern GameState* gGameState;
 }
 
 void PlayAsNabooru_DebugState(const char** move, float* frame);
+void PlayAsNabooru_DebugMotion(float* maxDegrees, int* joint, float* rootMove);
 void PlayAsNabooru_DebugForce(const char* name, float frame, const char* swords, float swordsFrame);
 const char* Jackal_DebugAction(Actor* actor);
 const char* Jackal_DebugPack();
@@ -259,17 +260,20 @@ void LogFrame() {
     const char* move = "-";
     float moveFrame = 0.0f;
     PlayAsNabooru_DebugState(&move, &moveFrame);
+    float motion = 0.0f, rootMove = 0.0f;
+    int motionJoint = 0;
+    PlayAsNabooru_DebugMotion(&motion, &motionJoint, &rootMove);
     SkelAnime* link = &player->skelAnime;
     SkelAnime* upper = &player->upperSkelAnime;
     fprintf(sLog,
             "%5d step%-3zu link %-34s %5.1f/%5.1f up %-26s %5.1f | nb %-22s %5.1f | y %7.1f vy %5.1f spd %5.1f "
-            "st1 %08X st2 %08X bg %04X face %04X dir %04X mv %4.1f fall %d\n",
+            "st1 %08X st2 %08X bg %04X face %04X dir %04X mv %4.1f fall %d dpose %5.1f@%-2d droot %5.0f\n",
             sFrame, sStepIndex, ShortAnimName(link->animation), link->curFrame, link->endFrame,
             ShortAnimName(upper->animation), upper->curFrame, move, moveFrame, player->actor.world.pos.y,
             player->actor.velocity.y, player->actor.speedXZ, player->stateFlags1, player->stateFlags2,
             player->actor.bgCheckFlags, (u16)player->actor.shape.rot.y, (u16)player->actor.world.rot.y,
             sqrtf(SQ(player->actor.world.pos.x - sLastPos.x) + SQ(player->actor.world.pos.z - sLastPos.z)),
-            player->fallDistance);
+            player->fallDistance, motion, motionJoint, rootMove);
     sLastPos = player->actor.world.pos;
 
     if (!sLogActors.empty()) {
