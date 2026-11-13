@@ -10,6 +10,7 @@
 #include <soh/Enhancements/TimeDisplay/TimeDisplay.h>
 #include "soh/Enhancements/Restorations/GetItemManipulation.h"
 #include "soh/Enhancements/randomizer/SeedContext.h"
+#include "soh/Enhancements/PlayAsNabooru/NabooruSave.h"
 #include <ship/Context.h>
 #include <libultraship/bridge/consolevariablebridge.h>
 #include <soh/ResourceManagerHelpers.h>
@@ -722,11 +723,17 @@ void SohMenu::AddMenuEnhancements() {
                 gSaveContext.nextTransitionType = TRANS_TYPE_FADE_BLACK;
             }
         });
-    AddWidget(path, "Honoured by Jackals", WIDGET_CVAR_CHECKBOX)
-        .CVar("gPlayAsNabooru.HonouredByJackals")
+    AddWidget(path, "Honoured by Jackals", WIDGET_CHECKBOX)
+        .ValuePointer(PlayAsNabooru_HonouredByJackalsFlag())
+        .PreFunc([](WidgetInfo& info) {
+            if (gPlayState == NULL) {
+                info.options->disabled = true;
+                info.options->disabledTooltip = "Load a save file first.";
+            }
+        })
         .Options(CheckboxOptions().Tooltip(
             "Jackals (Play as Nabooru mod) are enemies: they turn on whoever comes near them. They do not attack "
-            "one they honour: they only run up to watch her, and back off when approached."));
+            "one they honour: they only run up to watch her, and back off when approached. Kept in the save file."));
     AddWidget(path, "Enemy Health Bars", WIDGET_CVAR_CHECKBOX)
         .CVar(CVAR_ENHANCEMENT("EnemyHealthBar"))
         .Options(CheckboxOptions().Tooltip("Renders a health bar for Enemies when Z-Targeted."));

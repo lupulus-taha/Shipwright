@@ -7,7 +7,7 @@
 // It also tints the picture slightly warm and turns on the game's hot-room heat haze (the slow wobble of the whole
 // view in Death Mountain Crater), without the heat timer that comes with real hot rooms.
 //
-// The area's inhabitants are spawned here as well: one jackal (EnJackal.cpp) by the oasis pit.
+// The area's inhabitants are spawned here as well: a pack of ten jackals (EnJackal.cpp) around the oasis pit.
 
 #include <libultraship/bridge/consolevariablebridge.h>
 #include "soh/Enhancements/game-interactor/GameInteractor.h"
@@ -31,10 +31,24 @@ Actor* Jackal_Spawn(PlayState* play, f32 x, f32 y, f32 z, s16 yaw);
 // (-z), and above the horizon.
 static const float SUN_AZIMUTH = 250.0f;
 static const float SUN_ELEVATION = 40.0f;
-// A jackal stands by the east edge of the oasis pit (the pit's middle is at -1600, 0), looking towards where the
-// player arrives.
-static const Vec3f JACKAL_POS = { -1130.0f, 0.0f, -60.0f };
-static const s16 JACKAL_YAW = 0x6B00;
+// The pack lives around the oasis pit (its middle is at -1600, 0; its grassy slope reaches out to about 350-450 from
+// there): ten jackals about its rim, a few together, two down in the dry bowl. Each wanders about its own spot.
+struct JackalHome {
+    float x, z;
+    s16 yaw;
+};
+static const JackalHome JACKAL_HOMES[] = {
+    { -1130.0f, -60.0f, 0x6B00 }, // east edge, looking towards where the player arrives
+    { -1170.0f, 170.0f, 0x5000 },
+    { -1280.0f, -360.0f, 0x7000 }, // north-east, a pair
+    { -1200.0f, -450.0f, -0x7800 },
+    { -1560.0f, -500.0f, -0x8000 }, // north
+    { -2120.0f, -40.0f, -0x4000 }, // west
+    { -1640.0f, 490.0f, 0x0000 },  // south, a pair
+    { -1520.0f, 560.0f, 0x2800 },
+    { -1480.0f, 140.0f, 0x3000 }, // in the bowl
+    { -1700.0f, -120.0f, -0x6000 },
+};
 // The warm tint over the picture.
 static const Color_RGBA8 HEAT_TINT = { 255, 150, 40, 16 };
 
@@ -73,7 +87,10 @@ static void RegisterJackalRefuge() {
     // the area's inhabitants arrive with the player (the scene itself lists no actors: ours have no fixed ids)
     COND_ID_HOOK(OnActorInit, ACTOR_PLAYER, true, [](void* actor) {
         if (gPlayState != NULL && gPlayState->sceneNum == SCENE_JACKAL_REFUGE) {
-            Jackal_Spawn(gPlayState, JACKAL_POS.x, JACKAL_POS.y, JACKAL_POS.z, JACKAL_YAW);
+            for (const JackalHome& home : JACKAL_HOMES) {
+                // (those in the bowl drop down onto its slope)
+                Jackal_Spawn(gPlayState, home.x, 0.0f, home.z, home.yaw);
+            }
         }
     });
     // after the whole world is drawn, under the HUD

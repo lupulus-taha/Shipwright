@@ -25,6 +25,8 @@
 //   save | restore            remember the player's position and facing | go back there
 //   rise DY                   move the player up by DY (she falls back down)
 //   cvar NAME VALUE           set an integer CVar (not saved)
+//   honoured 0|1              whether Nabooru is honoured by jackals (the save file's flag)
+//   savecheck                 write the game into save slot 1 and load it back, logging the mod's save flags
 //   warp HEX                  go to entrance HEX (follow with waitplay)
 //   pose NAME FRAME [SWORDS SFRAME]  show frame FRAME of gPlayAsNabooru<NAME>Anim instead of mirroring Link,
 //                             optionally with the scimitars of <SWORDS> frame SFRAME; "pose off"
@@ -34,7 +36,9 @@
 #include "soh/Enhancements/game-interactor/GameInteractor.h"
 #include "soh/ShipInit.hpp"
 #include "soh/ActorDB.h"
+#include "soh/SaveManager.h"
 #include "soh/Enhancements/PlayAsNabooru/ModSound.h"
+#include "soh/Enhancements/PlayAsNabooru/NabooruSave.h"
 #include <ship/Context.h>
 #include <ship/window/Window.h>
 #include <cstdio>
@@ -56,6 +60,7 @@ extern GameState* gGameState;
 
 void PlayAsNabooru_DebugState(const char** move, float* frame);
 void PlayAsNabooru_DebugForce(const char* name, float frame, const char* swords, float swordsFrame);
+const char* Jackal_DebugAction(Actor* actor);
 
 namespace {
 
@@ -74,6 +79,8 @@ enum class Kind {
     Face,
     Pos,
     CVar,
+    Honoured,
+    SaveCheck,
     Pose,
     Warp,
     Rise,
@@ -194,6 +201,11 @@ void LoadScript(const char* path) {
         } else if (cmd == "cvar") {
             step.kind = Kind::CVar;
             in >> step.text >> step.values[0];
+        } else if (cmd == "savecheck") {
+            step.kind = Kind::SaveCheck;
+        } else if (cmd == "honoured") {
+            step.kind = Kind::Honoured;
+            in >> step.values[0];
         } else if (cmd == "warp") {
             step.kind = Kind::Warp;
             int entrance = 0;
@@ -260,11 +272,12 @@ void LogFrame() {
                 SkelAnime* skel = (SkelAnime*)(actor + 1);
                 fprintf(sLog,
                         "%5d   %s at %7.1f %6.1f %7.1f yaw %04X spd %5.1f vy %5.1f anim %-18s %5.1f hp %2d "
-                        "flags %08X bg %04X dist %6.1f\n",
+                        "flags %08X bg %04X dist %6.1f%s%s\n",
                         sFrame, sLogActors.c_str(), actor->world.pos.x, actor->world.pos.y, actor->world.pos.z,
                         (u16)actor->shape.rot.y, actor->speedXZ, actor->velocity.y, ShortAnimName(skel->animation),
                         skel->curFrame, actor->colChkInfo.health, actor->flags, actor->bgCheckFlags,
-                        actor->xzDistToPlayer);
+                        actor->xzDistToPlayer, (sLogActors == "En_Jackal") ? " act " : "",
+                        (sLogActors == "En_Jackal") ? Jackal_DebugAction(actor) : "");
             }
         }
     }
@@ -342,7 +355,9 @@ void OnFrameStart() {
 
     // While a screenshot is pending, hold gameplay still (frame advance) so the capture shows exactly this frame.
     if (sWaitingForShot) {
-        bool taken = !std::filesystem::exists(sOutDir + "/shot.req");
+        // (the capturer may be deleting the file right now: an error is no answer, ask again next frame)
+        std::error_code error;
+        bool taken = !std::filesystem::exists(sOutDir + "/shot.req", error) && !error;
         if (taken || ++sShotWait > 200) {
             sWaitingForShot = false;
         }
@@ -455,6 +470,24 @@ void OnFrameStart() {
             case Kind::CVar:
                 CVarSetInteger(step.text.c_str(), (s32)step.values[0]);
                 break;
+            case Kind::Honoured:
+                PlayAsNabooru_SetHonouredByJackals(step.values[0] != 0.0f);
+                break;
+            case Kind::SaveCheck: {
+                // (a game booted at a warp point plays on a file that is never saved: borrow slot 1)
+                u8 fileNum = gSaveContext.fileNum;
+                bool before = PlayAsNabooru_IsHonouredByJackals();
+                gSaveContext.fileNum = 0;
+                SaveManager::Instance->SaveSection(0, SECTION_ID_BASE, false);
+                PlayAsNabooru_SetHonouredByJackals(!before);
+                SaveManager::Instance->LoadFile(0);
+                if (sLog) {
+                    fprintf(sLog, "savecheck honoured %d -> saved, changed, loaded -> %d\n", before,
+                            PlayAsNabooru_IsHonouredByJackals());
+                }
+                gSaveContext.fileNum = fileNum;
+                break;
+            }
             case Kind::Warp:
                 if (gPlayState != nullptr) {
                     gPlayState->nextEntranceIndex = (s16)step.values[0];
