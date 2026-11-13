@@ -10,6 +10,9 @@ writes C), which does not have to be installed, only present on disk:
   blender --background --factory-startup --python build_jackal.py -- [--fast64 DIR containing fast64_hm]
           [--out x64/Debug/mods/jackal.o2r] [--blend FILE] [--preview DIR] [--no-export]
 
+--preview renders contact sheets of the model and of every animation; set the environment variable JACKAL_REPORT to
+an animation's name (Idle, Walk, Run) to print what each leg does on each of its frames.
+
 In the style of the N64 game: about 400 triangles, one flex skeleton of 21 limbs with every vertex on a single limb,
 two small 16-bit textures (fur 32x64, face 64x32, each within the console's 4 KB texture memory), lit and fogged like
 the game's own creatures. Sizes below are in game units (Nabooru is about 60 tall); x is forward here ("f"), up is "u",
@@ -18,7 +21,6 @@ the game's own creatures. Sizes below are in game units (Nabooru is about 60 tal
 import argparse
 import math
 import os
-import shutil
 import struct
 import sys
 import tempfile
@@ -455,7 +457,10 @@ def export_skeleton(armature, folder):
 # Poses are described the way the animal moves: where the body is, how each part is turned from its rest pose
 # (degrees: pitch = nose up / a hanging part swings forward, yaw = to the left, roll = the top leans left) and where
 # each paw is; the legs are then bent to reach their paws.
-LEGS = {"FrontLegL": ("Chest", -1), "FrontLegR": ("Chest", -1), "HindLegL": ("Root", 1), "HindLegR": ("Root", 1)}
+# leg -> (the limb it hangs from, which way it bends, how far its upper part may swing back and forward: any
+# further and its top would come out of the body)
+LEGS = {"FrontLegL": ("Chest", -1, (-62, 40)), "FrontLegR": ("Chest", -1, (-62, 40)),
+        "HindLegL": ("Root", 1, (-38, 46)), "HindLegR": ("Root", 1, (-38, 46))}
 
 
 def plane(point):
@@ -485,6 +490,9 @@ class Pose:
         self.move = [0.0, 0.0, 0.0]  # of the whole animal: forward, up, left
         self.turn = {}  # limb -> (pitch, yaw, roll) from its rest pose, relative to its parent
         self.paws = {}  # leg -> ((f, u) of the paw relative to where it stands at rest, pitch of the paw)
+        self.swing = {}  # (worked out) leg -> how far its upper part is swung from rest, against the body
+        self.wanted = {}  # (worked out) leg -> (the swing it would take without limits, where its paw is)
+        self.slip = 0.0  # (worked out) degrees a leg on the ground would have had to swing beyond its limits
 
     def solve(self):
         """-> ({limb: rotation from rest, in the armature's axes}, how far out of reach the worst paw is)"""
@@ -498,7 +506,7 @@ class Pose:
         chest_pitch = root_pitch + self.turn.get("Chest", (0, 0, 0))[0]
         frames = {"Root": (root, plane(BONES["Root"][1]), root_pitch), "Chest": (chest, plane(BONES["Chest"][1]), chest_pitch)}
         short = 0.0
-        for leg, (parent, bend) in LEGS.items():
+        for leg, (parent, bend, swing) in LEGS.items():
             hip, knee, ankle = (plane(BONES[leg + part][1]) for part in "ABC")
             paw = (BONES[leg + "C"][2][0], 0.0)
             origin, rest_origin, parent_pitch = frames[parent]
@@ -511,9 +519,18 @@ class Pose:
             reach = min(max(reach, abs(upper - lower) * 1.02), (upper + lower) * 0.999)
             inside = math.degrees(math.acos((upper * upper + reach * reach - lower * lower) / (2 * upper * reach)))
             upper_dir = direction(hip_now, ankle_now) + bend * inside
-            knee_now = add(hip_now, turned((upper, 0.0), upper_dir))
             ankle_now = add(hip_now, turned((reach, 0.0), direction(hip_now, ankle_now)))
+            # keep the upper part within its swing; the lower part then points at where the ankle should be
+            rest_dir = direction(hip, knee) + parent_pitch
+            limited = rest_dir + min(max((upper_dir - rest_dir + 180) % 360 - 180, swing[0]), swing[1])
+            self.wanted[leg] = ((upper_dir - rest_dir + 180) % 360 - 180, offset)
+            if abs(limited - upper_dir) % 360 > 0.01 and offset[1] <= 0:
+                self.slip = max(self.slip, abs((limited - upper_dir + 180) % 360 - 180))
+            upper_dir = limited
+            knee_now = add(hip_now, turned((upper, 0.0), upper_dir))
+            ankle_now = add(knee_now, turned((lower, 0.0), direction(knee_now, ankle_now)))
             pitches = [upper_dir - direction(hip, knee), direction(knee_now, ankle_now) - direction(knee, ankle), paw_pitch]
+            self.swing[leg] = (pitches[0] - parent_pitch + 180) % 360 - 180
             for part, pitch, before in zip("ABC", pitches, [parent_pitch] + pitches):
                 pitch = (pitch - before + 180) % 360 - 180
                 out[leg + part] = Quaternion((1, 0, 0), math.radians(-pitch))
@@ -601,7 +618,7 @@ def run_pose(t):
     duty = 0.3
     travel = RUN_SPEED * RUN_FRAMES * duty
     stretch = wave(t, 0.2)  # +1 stretched out in the air after the hind paws push off, -1 gathered
-    pose.move = [0.0, -2.6 + 1.5 * wave(t, 0.12), 0.0]
+    pose.move = [0.0, -1.2 + 1.4 * wave(t, 0.12), 0.0]
     pose.turn["Root"] = (5.0 * wave(t, 0.93), 0.0, 0.0)
     pose.turn["Chest"] = (-7.0 + 11.0 * stretch, 0.0, 0.0)
     pose.turn["Neck"] = (-24.0 - 6.0 * stretch, 0.0, 0.0)
@@ -614,9 +631,9 @@ def run_pose(t):
     for leg, phase, front in (("HindLegL", 0.0, False), ("HindLegR", 0.1, False), ("FrontLegR", 0.48, True),
                               ("FrontLegL", 0.58, True)):
         if front:
-            step(pose, leg, t - phase, duty, (travel * 0.56, -travel * 0.44), 6.5, (14, -30), 75)
+            step(pose, leg, t - phase, duty, (travel * 0.5, -travel * 0.5), 5.5, (14, -30), 62)
         else:
-            step(pose, leg, t - phase, duty, (travel * 0.62, -travel * 0.38), 5.0, (10, -24), 34)
+            step(pose, leg, t - phase, duty, (travel * 0.46, -travel * 0.54), 4.0, (10, -24), 34)
     return pose
 
 
@@ -634,10 +651,17 @@ def make_actions(armature):
         armature.animation_data.action = action
         before = {}
         worst = 0.0
+        swings = {}
         for frame in range(frames):
             pose = pose_at(frame / frames)
             turns, short = pose.solve()
-            worst = max(worst, short)
+            worst = max(worst, short, pose.slip)
+            if os.environ.get("JACKAL_REPORT") == name:  # for tuning a gait: every leg on every frame
+                print(f"jackal: {frame:2}: " + "  ".join(
+                    f"{leg[:1]}{leg[-1]} {'ground' if o[1] <= 0 else 'air   '} f{o[0]:6.1f} swing {w:5.0f}" for leg, (w, o) in pose.wanted.items()))
+            for leg, swing in pose.swing.items():
+                low, high = swings.get(leg[:-1], (0.0, 0.0))
+                swings[leg[:-1]] = (min(low, swing), max(high, swing))
             for bone in armature.pose.bones:
                 turn = turns.get(bone.name, Quaternion())
                 # the same turn, in the bone's own axes
@@ -652,8 +676,10 @@ def make_actions(armature):
                     f, u, s = pose.move
                     bone.location = rest[bone.name].inverted() @ (Vector((s, -f, u)) * UNIT)
                     bone.keyframe_insert("location", frame=frame)
-        if worst > 0:
-            print(f"jackal: {name}: a paw is {worst:.2f} out of the leg's reach")
+        if worst > 0.1:
+            print(f"jackal: {name}: a paw on the ground is {worst:.2f} out of its leg's reach")
+        # (the tops of the legs come out of the body if they swing too far)
+        print(f"jackal: {name}: " + ", ".join(f"{leg} swings {low:.0f} to {high:.0f}" for leg, (low, high) in swings.items()))
         actions[name] = action
     return actions
 

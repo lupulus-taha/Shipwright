@@ -9,7 +9,7 @@
 // yet.
 //
 // For looking at its animations, the CVar gPlayAsNabooru.JackalGait makes every jackal ignore the player:
-// 1 = stand, 2 = walk in a circle, 3 = run in a circle.
+// 1 = stand, 2 = walk in a circle, 3 = run in a circle, 4 = walk on the spot, 5 = run on the spot.
 
 #include <libultraship/bridge/consolevariablebridge.h>
 #include "soh/ActorDB.h"
@@ -127,9 +127,7 @@ static void EnJackal_SetAnim(EnJackal* self, s32 anim, f32 morphFrames) {
 }
 
 // Picks the gait for how fast it is going, and plays it at that pace.
-static void EnJackal_UpdateGait(EnJackal* self) {
-    f32 speed = self->actor.speedXZ;
-
+static void EnJackal_UpdateGait(EnJackal* self, f32 speed) {
     if (speed < 0.15f) {
         EnJackal_SetAnim(self, JACKAL_ANIM_IDLE, 6.0f);
         self->skelAnime.playSpeed = 1.0f;
@@ -239,19 +237,22 @@ static void EnJackal_Retreat(EnJackal* self, PlayState* play) {
     }
 }
 
-// For looking at the animations: stands, or goes round in a circle at its walk or run.
-static void EnJackal_ShowGait(EnJackal* self, s32 gait) {
-    if (gait == 1) {
-        EnJackal_Stop(self, 0.5f);
-    } else {
-        f32 speed = (gait == 2) ? WALK_SPEED : RUN_SPEED;
+// For looking at the animations: stands, or walks or runs, round in a circle or on the spot.
+// Returns the speed its gait is to be played for.
+static f32 EnJackal_ShowGait(EnJackal* self, s32 gait) {
+    f32 speed = (gait == 1) ? 0.0f : (gait == 2 || gait == 4) ? WALK_SPEED : RUN_SPEED;
+
+    self->action = EnJackal_Wait;
+    self->timer = 20;
+    if (gait == 2 || gait == 3) {
         f32 radius = (gait == 2) ? 110.0f : 260.0f;
 
         self->actor.world.rot.y += (s16)(speed / radius * (0x8000 / M_PI));
         Math_SmoothStepToF(&self->actor.speedXZ, speed, 0.4f, 0.6f, 0.02f);
+        return self->actor.speedXZ;
     }
-    self->action = EnJackal_Wait;
-    self->timer = 20;
+    self->actor.speedXZ = 0.0f;
+    return speed;
 }
 
 static void EnJackal_Init(Actor* thisx, PlayState* play) {
@@ -287,12 +288,12 @@ static void EnJackal_Update(Actor* thisx, PlayState* play) {
     s16 lookPitch = 0;
 
     if (gait != 0) {
-        EnJackal_ShowGait(self, gait);
+        EnJackal_UpdateGait(self, EnJackal_ShowGait(self, gait));
     } else {
         self->action(self, play);
+        EnJackal_UpdateGait(self, self->actor.speedXZ);
     }
     self->actor.shape.rot.y = self->actor.world.rot.y;
-    EnJackal_UpdateGait(self);
     SkelAnime_Update(&self->skelAnime);
     Actor_MoveXZGravity(&self->actor);
     Actor_UpdateBgCheckInfo(play, &self->actor, 20.0f, 18.0f, 30.0f, 5);
