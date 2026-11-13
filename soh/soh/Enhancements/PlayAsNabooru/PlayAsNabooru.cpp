@@ -141,6 +141,8 @@ const Move kLandShort = { .name = "LandShort",
                           .start = 1,
                           .end = 16,
                           .bareAnim = GEN(LandLow) };
+// the same while Z-targeting with scimitars (side hops): settling into her fighting stance, which follows
+const Move kLandShortStance = { "LandShortStance", GEN(LandLowStance), nullptr, Mode::Sync, 1, 16 };
 // after a long drop, moving on (Link rolls): a quick dip, then her walk/run takes over
 const Move kLandQuick = { "LandQuick", GEN(Jump), GEN_SWORDS(Jump), Mode::Once, 4, 14, 2.0f };
 constexpr s32 kLandQuickFrames = 5;
@@ -553,7 +555,7 @@ bool IsAttack(const Move* move) {
 // moves that give way to her walk/run when Link moves while his animation is stalled (see Nabooru_OnPlayerUpdate)
 bool YieldsToLocomotion(const Move* move) {
     return IsAttack(move) || move == &kSpinEnd || move == &kLandQuick || move == &kBackflipEnd ||
-           move == &kJumpSlashEnd || move == &kLand || move == &kLandShort;
+           move == &kJumpSlashEnd || move == &kLand || move == &kLandShort || move == &kLandShortStance;
 }
 
 void UpdateEyes() {
@@ -644,6 +646,10 @@ void Nabooru_OnPlayerUpdate() {
     }
     if (body == &kTired && sShowSwords) {
         body = &kTiredSwords;
+    }
+    if (body == &kLandShort && sShowSwords && IsTargeting(player) && HasAnimation(kLandShortStance.anim) &&
+        HasAnimation(kStance.anim)) {
+        body = &kLandShortStance;
     }
 
     // Landing after a long drop while moving on (Link rolls): a quick dip into her walk/run. Short drops have none.

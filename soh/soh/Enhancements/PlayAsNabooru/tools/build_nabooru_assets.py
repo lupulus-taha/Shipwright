@@ -776,6 +776,8 @@ def main():
     soft = make_soft_landing(jump, relaxed[0])
     add("LandLow", make_low_landing(jump, relaxed[0]), "landing with the knees half as bent, settling relaxed")
     armed["LandLowArmed"] = make_low_landing(jump, armed_idle[0], clearance)
+    # Z-targeting with scimitars (side hops): settling into her fighting stance, which comes next
+    armed["LandLowStance"] = make_low_landing(jump, tables["gPlayAsNabooruNeutralAnim"][0], clearance)
     add("FlipBare", make_bare_flip(tables["gPlayAsNabooruFlipAnim"], soft[5], relaxed[0]),
         "backflip landing relaxed, for empty hands")
     for name, table in armed.items():
