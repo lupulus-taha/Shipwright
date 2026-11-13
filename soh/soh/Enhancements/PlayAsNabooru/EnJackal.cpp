@@ -12,8 +12,10 @@
 //    one, it turns on her and the alarm goes through the pack: the others nearby join in. They come at her in waves:
 //    a few at a time run up, snarl, leap at her to bite, dart aside and come again, and after a few bites make way
 //    for another. The rest circle her at a distance, waiting their turn (one she corners bites anyway). After a few
-//    leaps the wave is over: they all fall back and circle her for a moment before the next. Each dies of a few
-//    blows. They give up when she gets away from them.
+//    leaps the wave is over: they all fall back and circle her for a moment before the next. That respite is for one
+//    who holds her ground: going after them angers the pack, and then they give her less of it (one she runs at
+//    turns and meets her, the pauses shorten and go). Each dies of a few blows. They give up when she gets away from
+//    them.
 //  - Honoured, they are only curious: they run up, keep a few steps away and watch her, and back off when approached.
 //    They never attack and cannot be hurt.
 //
@@ -135,6 +137,15 @@ static const f32 TERRITORY_EDGE = 300.0f; // it does not turn on her this near t
 static const s16 GIVE_UP_TIME = 5 * 20; // having given up, it ignores her (and the pack) for this many frames
 static const s16 WAVE_LEAPS = 3;        // a wave of attacks is over after this many leaps (and up to 2 more)...
 static const s16 WAVE_PAUSE = 2 * 20;   // ...and the next comes this many frames after the last attacker is done
+// Their anger (0-1): the pauses are for a player who holds her ground. One who goes after them (runs at one that is
+// circling her, or strikes one) angers the pack: the pauses get shorter (none at full anger),
+// the waves longer, the leaps closer together, and at half anger one more comes at her at once. One she runs at turns
+// and meets her.
+static const f32 ANGER_RISE = 1.0f / 30;  // a frame of her running at one of them
+static const f32 ANGER_HIT = 0.5f;        // her striking one that is circling her
+static const f32 ANGER_COOL = 1.0f / 200; // a frame of her not going after them
+static const f32 CHARGE_RANGE = 300.0f;   // running at one this near counts as going after it...
+static const s16 CHARGE_CONE = 0x1800;    // ...if it is no more than this off her way
 
 enum JackalDamageEffect { JACKAL_DMGEFF_NONE, JACKAL_DMGEFF_STUN };
 
@@ -295,7 +306,8 @@ struct EnJackal {
     s16 circleTime; // (circling) frames it has been at it
     s16 attacks;    // its turn: bites it has made, and how many it makes before it makes way for another
     s16 turnLength;
-    s32 turnWave;   // the wave of the pack's it last had a turn in
+    bool counter;   // its turn is to meet her coming at it: it attacks even when the wave is over
+    s32 turnWave;  // the wave of the pack's it last had a turn in
     s16 callTimer; // frames until it answers the pack's howl or alarm, -1 if it has not heard one
     s16 giveUpTimer; // frames it still ignores her for, having given up on her
 };
@@ -370,7 +382,8 @@ struct JackalPack {
     // circle her for WAVE_PAUSE frames before the next.
     s32 wave;       // which wave this is
     s16 waveLeft;   // leaps the wave has left (0: it is over, they are circling)
-    s16 pauseTimer; // over: frames until the next wave, from when none of them is attacking any more
+    s16 paused;     // over: frames since none of them is attacking any more
+    f32 anger;      // how much she has gone after them (see ANGER_RISE)
 };
 
 static JackalPack sPack;
@@ -381,9 +394,23 @@ static f32 Pack_LinePlace(EnJackal* member) {
     return member->actor.xzDistToPlayer + ((member->turnWave >= sPack.wave - 1) ? 500.0f : 0.0f);
 }
 
+// Whether the player is running at it (not just thrown that way by a bite).
+static bool Pack_Charging(EnJackal* member, Player* player) {
+    s16 off = Actor_WorldYawTowardActor(&player->actor, &member->actor) - player->actor.world.rot.y;
+
+    return player->actor.speedXZ > 2.5f && !(player->stateFlags1 & PLAYER_STATE1_DAMAGED) &&
+           member->actor.xzDistToPlayer < CHARGE_RANGE && ABS(off) < CHARGE_CONE;
+}
+
+static s16 Pack_NewWave() {
+    return WAVE_LEAPS + (s16)Rand_ZeroFloat(2.99f) + (s16)(sPack.anger * 3.0f + 0.5f);
+}
+
 static void Pack_Gather(PlayState* play) {
+    Player* player = GET_PLAYER(play);
     s32 hostile = 0;
     s32 attacking = 0; // running in, snarling or leaping (darting away after a leap, it is done)
+    bool charging = false;
 
     if (sPack.frame == play->gameplayFrames) {
         return;
@@ -414,6 +441,7 @@ static void Pack_Gather(PlayState* play) {
             }
         }
         if (member->action == EnJackal_Circle) {
+            charging = charging || Pack_Charging(member, player);
             sPack.waiting++;
             if (sPack.nextInLine == NULL || Pack_LinePlace(member) < Pack_LinePlace(sPack.nextInLine)) {
                 sPack.nextInLine = member;
@@ -434,23 +462,30 @@ static void Pack_Gather(PlayState* play) {
     DECR(sPack.barkGap);
 
     if (hostile == 0) {
-        // at peace: the first wave is ready for when they turn on her
-        sPack.waveLeft = WAVE_LEAPS + (s16)Rand_ZeroFloat(2.99f);
-        sPack.pauseTimer = 0;
-    } else if (sPack.waveLeft == 0) {
+        // at peace: calm again, and the first wave is ready for when they turn on her
+        sPack.anger = 0.0f;
+        sPack.waveLeft = Pack_NewWave();
+        sPack.paused = 0;
+        return;
+    }
+    sPack.anger = charging ? MIN(sPack.anger + ANGER_RISE, 1.0f) : MAX(sPack.anger - ANGER_COOL, 0.0f);
+    if (sPack.waveLeft == 0) {
         if (attacking > 0) {
-            sPack.pauseTimer = WAVE_PAUSE;
-        } else if (DECR(sPack.pauseTimer) == 0) {
+            sPack.paused = 0;
+        } else if (++sPack.paused >= WAVE_PAUSE * (1.0f - sPack.anger)) {
             sPack.wave++;
-            sPack.waveLeft = WAVE_LEAPS + (s16)Rand_ZeroFloat(2.99f);
+            sPack.waveLeft = Pack_NewWave();
+            sPack.paused = 0;
         }
     }
 }
 
-// Whether the pack leaves room for another to take a turn: not too many at her already, and the wave not about to be
-// over (each that comes at her leaps at least once).
+// Whether the pack leaves room for another to take a turn: not too many at her already (one more when angry), and the
+// wave not about to be over (each that comes at her leaps at least once).
 static bool Pack_TurnFree() {
-    return sPack.engaged < MIN(MAX_ENGAGED, sPack.waveLeft);
+    s16 most = MAX_ENGAGED + ((sPack.anger >= 0.5f) ? 1 : 0);
+
+    return sPack.engaged < MIN(most, sPack.waveLeft);
 }
 
 // How near the nearest member that has turned on the player is (FLT_MAX if none has).
@@ -478,12 +513,14 @@ static void EnJackal_TakeTurn(EnJackal* self) {
     sPack.engaged++;
     sPack.turnTimer = 15 + (s16)Rand_ZeroFloat(20.0f);
     self->turnWave = sPack.wave;
+    self->counter = false;
     self->attacks = 0;
     self->turnLength = 1 + (s16)Rand_ZeroFloat(2.99f);
 }
 
 // It makes way for another: back to circling her.
 static void EnJackal_EndTurn(EnJackal* self) {
+    self->counter = false;
     sPack.engaged--;
     sPack.waiting++;
     EnJackal_SetupCircle(self);
@@ -746,7 +783,7 @@ static void EnJackal_Pursue(EnJackal* self, PlayState* play) {
     EnJackal_MoveTowards(self, &player->actor.world.pos, RUN_SPEED, 0.9f);
     if (EnJackal_LostPlayer(self, play)) {
         EnJackal_SetupGoHome(self);
-    } else if (sPack.waveLeft == 0) {
+    } else if (sPack.waveLeft == 0 && !self->counter) {
         EnJackal_EndTurn(self); // the wave is over
     } else if (self->actor.xzDistToPlayer < LEAP_RANGE && ABS(off) < 0x2000) {
         EnJackal_SetupThreaten(self, 8 + (s16)Rand_ZeroFloat(16.0f));
@@ -763,7 +800,8 @@ static void EnJackal_SetupThreaten(EnJackal* self, s16 frames) {
 static void EnJackal_SetupAttack(EnJackal* self) {
     self->stand = -1;
     self->leapt = false;
-    sPack.leapTimer = 12 + (s16)Rand_ZeroFloat(14.0f);
+    // (angry, they leap sooner after one another)
+    sPack.leapTimer = (s16)((12.0f + Rand_ZeroFloat(14.0f)) * (1.0f - 0.4f * sPack.anger));
     EnJackal_SetAnim(self, JACKAL_ANIM_ATTACK, 2.0f);
     self->action = EnJackal_Attack;
 }
@@ -771,7 +809,7 @@ static void EnJackal_SetupAttack(EnJackal* self) {
 static void EnJackal_Threaten(EnJackal* self, PlayState* play) {
     EnJackal_Stop(self, 1.5f);
     EnJackal_FacePlayer(self, 0x400, 0xA00);
-    if (sPack.waveLeft == 0 && self->actor.xzDistToPlayer > CLOSE_RANGE + 15.0f) {
+    if (sPack.waveLeft == 0 && !self->counter && self->actor.xzDistToPlayer > CLOSE_RANGE + 15.0f) {
         EnJackal_EndTurn(self); // the wave is over (unless she is right on top of it)
         return;
     }
@@ -880,10 +918,12 @@ static void EnJackal_Circle(EnJackal* self, PlayState* play) {
         return;
     }
     self->circleTime = MIN(self->circleTime + 1, 1000);
-    // (just struck or done with its turn, it is still close to her: it first makes for the ring)
-    if (self->actor.xzDistToPlayer < CLOSE_RANGE + 15.0f && self->circleTime > 10) {
-        // she has come at it: it bites, turn or no turn
+    // she has come at it (cornered it, or runs at it): it meets her, turn or no turn (just struck or done with its turn,
+    // it is still close to her: it first makes for the ring)
+    if (self->circleTime > 10 && (self->actor.xzDistToPlayer < CLOSE_RANGE + 15.0f ||
+                                  (self->actor.xzDistToPlayer < PURSUE_RANGE && Pack_Charging(self, player)))) {
         EnJackal_TakeTurn(self);
+        self->counter = true;
         EnJackal_SetupThreaten(self, 2);
         return;
     }
@@ -1012,6 +1052,10 @@ static void EnJackal_UpdateDamage(EnJackal* self, PlayState* play) {
         return;
     }
     Actor_SetDropFlag(&self->actor, &self->collider.info, 1);
+    // she went after one that was keeping its distance (one only just struck or done with its turn is still near her)
+    if (self->action == EnJackal_Circle && self->circleTime > 20) {
+        sPack.anger = MIN(sPack.anger + ANGER_HIT, 1.0f);
+    }
     if (self->actor.colChkInfo.damageEffect == JACKAL_DMGEFF_STUN) {
         if (self->action != EnJackal_Stunned) {
             Actor_SetColorFilter(&self->actor, 0, 120, 0, 80);
@@ -1268,4 +1312,13 @@ const char* Jackal_DebugAction(Actor* actor) {
         }
     }
     return "?";
+}
+
+// For the test harness's log: the pack's state.
+const char* Jackal_DebugPack() {
+    static char text[96];
+
+    snprintf(text, sizeof(text), "wave %d left %d paused %d anger %.2f engaged %d", sPack.wave, sPack.waveLeft,
+             sPack.paused, sPack.anger, sPack.engaged);
+    return text;
 }

@@ -10,6 +10,8 @@
 //   wait N                    neutral input for N frames
 //   hold N <input>            hold the input for N frames
 //   shots N EVERY NAME <input> hold the input for N frames, taking a screenshot every EVERY frames
+//   chase N EVERY NAME        for N frames, run at the nearest circling jackal (or else the nearest jackal) and slash
+//                             at it once near, taking a screenshot every EVERY frames (0: none)
 //   shot NAME                 screenshot (gameplay pauses until it's taken)
 //   log on|off                per-frame log to <out>/log.txt (also the player's voice sounds: "sfx ID")
 //   actors NAME               also log every actor of that name (as in the actor database, e.g. En_Jackal) each
@@ -41,8 +43,11 @@
 #include "soh/Enhancements/PlayAsNabooru/NabooruSave.h"
 #include <ship/Context.h>
 #include <ship/window/Window.h>
+#include <algorithm>
+#include <cfloat>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -61,12 +66,14 @@ extern GameState* gGameState;
 void PlayAsNabooru_DebugState(const char** move, float* frame);
 void PlayAsNabooru_DebugForce(const char* name, float frame, const char* swords, float swordsFrame);
 const char* Jackal_DebugAction(Actor* actor);
+const char* Jackal_DebugPack();
 
 namespace {
 
 enum class Kind {
     WaitPlay,
     Hold,
+    Chase,
     Shot,
     Log,
     Actors,
@@ -171,6 +178,9 @@ void LoadScript(const char* path) {
             step.kind = Kind::Hold;
             in >> step.frames >> step.every >> step.text;
             ParseInput(in, step);
+        } else if (cmd == "chase") {
+            step.kind = Kind::Chase;
+            in >> step.frames >> step.every >> step.text;
         } else if (cmd == "shot") {
             step.kind = Kind::Shot;
             in >> step.text;
@@ -280,6 +290,9 @@ void LogFrame() {
                         (sLogActors == "En_Jackal") ? Jackal_DebugAction(actor) : "");
             }
         }
+        if (sLogActors == "En_Jackal") {
+            fprintf(sLog, "%5d   pack %s\n", sFrame, Jackal_DebugPack());
+        }
     }
     if (sLogAudio) {
         int game = 0, mod = 0;
@@ -334,6 +347,41 @@ void LogPlayerSfx(u16 sfxId, const Vec3f* pos, bool played) {
     }
 }
 
+// An aggressive player: runs at the nearest jackal that is circling her (or else the nearest), and slashes whenever
+// one is in reach.
+void ChaseInput(Player* player, int frame, u16* buttons, s8* stickX, s8* stickY) {
+    static const std::string kJackal = "En_Jackal";
+    Actor* target = nullptr;
+    bool targetCircling = false;
+    float nearest = FLT_MAX;
+
+    for (Actor* actor = gPlayState->actorCtx.actorLists[ACTORCAT_ENEMY].head; actor != nullptr; actor = actor->next) {
+        if (actor->update == nullptr || ActorDB::Instance->RetrieveEntry(actor->id).name != kJackal ||
+            strcmp(Jackal_DebugAction(actor), "die") == 0) {
+            continue;
+        }
+        bool circling = strcmp(Jackal_DebugAction(actor), "circle") == 0;
+        nearest = std::min(nearest, actor->xzDistToPlayer);
+        if (target == nullptr || (circling && !targetCircling) ||
+            (circling == targetCircling && actor->xzDistToPlayer < target->xzDistToPlayer)) {
+            target = actor;
+            targetCircling = circling;
+        }
+    }
+    if (target == nullptr) {
+        return;
+    }
+    if (target->xzDistToPlayer > 60.0f) {
+        // (the stick is camera relative: up is the way the camera looks, right is to its right)
+        s16 rel = Actor_WorldYawTowardActor(&player->actor, target) - Camera_GetInputDirYaw(GET_ACTIVE_CAM(gPlayState));
+        *stickX = (s8)(-80.0f * Math_SinS(rel));
+        *stickY = (s8)(80.0f * Math_CosS(rel));
+    }
+    if (nearest < 100.0f && (frame % 10) < 2) {
+        *buttons |= BTN_B;
+    }
+}
+
 // Runs once per game frame, right after the real controller state was copied in and before the game state updates.
 void OnFrameStart() {
     if (gGameState == nullptr) {
@@ -382,9 +430,13 @@ void OnFrameStart() {
                 }
                 break;
             case Kind::Hold:
+            case Kind::Chase:
                 buttons = step.buttons;
                 stickX = step.stickX;
                 stickY = step.stickY;
+                if (step.kind == Kind::Chase && player != nullptr) {
+                    ChaseInput(player, sStepFrame, &buttons, &stickX, &stickY);
+                }
                 if (step.every > 0 && (sStepFrame % step.every) == 0) {
                     char name[256];
                     snprintf(name, sizeof(name), "%s_%03d", step.text.c_str(), sStepFrame);
