@@ -257,6 +257,12 @@ constexpr f32 kRunThreshold = 4.5f;
 constexpr f32 kAttackStepThreshold = 1.0f; // Link's attacks slide him; above this, her legs step along
 constexpr f32 kCrossfadeStep = 0.2f;       // a new move blends in over 5 frames
 constexpr f32 kLayerFadeStep = 0.25f;
+// Strafing slowly she leans much less than the fighter's sidestep: at up to kStraightSpeed this much of the lean is
+// taken out, none of it from kLeanSpeed (Link's full sideways speed is 5.4).
+constexpr f32 kStraightenMax = 0.8f;
+constexpr f32 kStraightSpeed = 2.0f;
+constexpr f32 kLeanSpeed = 4.5f;
+constexpr f32 kStraightenStep = 0.15f;
 
 struct Layer {
     SkelAnime skel;
@@ -277,6 +283,7 @@ f32 sOverlayWeight = 0.0f;
 Vec3s sFinalJoints[NB_LIMB_MAX];
 Vec3s sFadeFrom[NB_LIMB_MAX]; // her pose when the current move started, blended out over a few frames
 f32 sFadeWeight = 0.0f;
+f32 sStraighten = 0.0f; // how much of her sideways lean is taken out (strafing slowly)
 
 bool sShowSwords = false;
 Vec3f sPrevPos;
@@ -377,6 +384,37 @@ void MixRotation(Vec3s& a, const Vec3s& b, f32 weight) {
                p.z + (sign * q.z - p.z) * weight };
     f32 len = sqrtf(m.w * m.w + m.x * m.x + m.y * m.y + m.z * m.z);
     a = ToEuler({ m.w / len, m.x / len, m.y / len, m.z / len });
+}
+
+Quat QMul(const Quat& a, const Quat& b) {
+    return { a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z, a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
+             a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x, a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w };
+}
+
+Quat QConj(const Quat& q) {
+    return { q.w, -q.x, -q.y, -q.z };
+}
+
+Vec3f QRotate(const Quat& q, Vec3f v) {
+    Quat r = QMul(QMul(q, { 0.0f, v.x, v.y, v.z }), QConj(q));
+    return { r.x, r.y, r.z };
+}
+
+Vec3f Normalized(Vec3f v) {
+    f32 len = sqrtf(v.x * v.x + v.y * v.y + v.z * v.z);
+    return (len > 0.0f) ? Vec3f{ v.x / len, v.y / len, v.z / len } : v;
+}
+
+// `weight` of the shortest rotation that turns direction `from` into direction `to` (both unit length)
+Quat PartialTurn(Vec3f from, Vec3f to, f32 weight) {
+    Vec3f axis = { from.y * to.z - from.z * to.y, from.z * to.x - from.x * to.z, from.x * to.y - from.y * to.x };
+    f32 sinAngle = sqrtf(axis.x * axis.x + axis.y * axis.y + axis.z * axis.z);
+    f32 angle = atan2f(sinAngle, from.x * to.x + from.y * to.y + from.z * to.z) * weight;
+    if (sinAngle < 1e-6f) {
+        return { 1.0f, 0.0f, 0.0f, 0.0f };
+    }
+    f32 s = sinf(angle * 0.5f) / sinAngle;
+    return { cosf(angle * 0.5f), axis.x * s, axis.y * s, axis.z * s };
 }
 
 void MixTranslation(Vec3s& a, const Vec3s& b, f32 weight) {
@@ -565,6 +603,60 @@ void UpdateEyes() {
     sEyeIndex = (sBlinkTimer < ARRAY_COUNT(sEyeTextures)) ? sBlinkTimer : 0;
 }
 
+bool SampleJointRotation(const char* path, s32 frame, s32 joint, Vec3s* out);
+
+// The fighter's sidestep (like her stance) leans to one side: hips rolled, spine tilted; mirrored for the other
+// direction. Upright = the average of the two: her hips' up direction and her spine's direction, in model space.
+bool StrafeUpright(Vec3f* rootUp, Vec3f* spine) {
+    static bool sDone = false, sOk = false;
+    static Vec3f sRootUp, sSpine;
+    if (!sDone) {
+        sDone = true;
+        Vec3f up = { 0.0f, 0.0f, 0.0f }, sp = { 0.0f, 0.0f, 0.0f };
+        for (const Move* move : { &kStrafe, &kStrafeMirror }) {
+            if (!HasAnimation(move->anim)) {
+                return false;
+            }
+            s32 frames = Animation_GetLastFrame((AnimationHeader*)move->anim) + 1;
+            for (s32 f = 0; f < frames; f++) {
+                Vec3s rootRot, torsoRot;
+                SampleJointRotation(move->anim, f, NB_LIMB_ROOT, &rootRot);
+                SampleJointRotation(move->anim, f, NB_LIMB_TORSO, &torsoRot);
+                Quat root = ToQuat(rootRot);
+                Vec3f u = QRotate(root, { 0.0f, 1.0f, 0.0f });
+                Vec3f d = QRotate(QMul(root, ToQuat(torsoRot)), { 1.0f, 0.0f, 0.0f }); // the spine runs along +x
+                up = { up.x + u.x, up.y + u.y, up.z + u.z };
+                sp = { sp.x + d.x, sp.y + d.y, sp.z + d.z };
+            }
+        }
+        sRootUp = Normalized(up);
+        sSpine = Normalized(sp);
+        sOk = true;
+    }
+    *rootUp = sRootUp;
+    *spine = sSpine;
+    return sOk;
+}
+
+// Takes `weight` of her sideways lean out: her hips and spine turn part of the way upright, her legs keep their
+// direction (so her feet stay where they are) and everything above the torso goes along with it.
+void Straighten(Vec3s* joints, f32 weight) {
+    Vec3f uprightRoot, uprightSpine;
+    if (!StrafeUpright(&uprightRoot, &uprightSpine)) {
+        return;
+    }
+    Quat root = ToQuat(joints[NB_LIMB_ROOT]);
+    Quat torso = QMul(root, ToQuat(joints[NB_LIMB_TORSO])); // in model space
+    Quat newRoot = QMul(PartialTurn(QRotate(root, { 0.0f, 1.0f, 0.0f }), uprightRoot, weight), root);
+    Quat newTorso = QMul(PartialTurn(QRotate(torso, { 1.0f, 0.0f, 0.0f }), uprightSpine, weight), torso);
+    Quat undo = QMul(QConj(newRoot), root);
+    for (s32 limb : { NB_LIMB_L_THIGH, NB_LIMB_R_THIGH, NB_LIMB_WAIST }) {
+        joints[limb] = ToEuler(QMul(undo, ToQuat(joints[limb])));
+    }
+    joints[NB_LIMB_TORSO] = ToEuler(QMul(QConj(newRoot), newTorso));
+    joints[NB_LIMB_ROOT] = ToEuler(newRoot);
+}
+
 // her final pose: the body, the overlay over its masked joints, and the pose she's blending out of
 void BlendLayers() {
     for (s32 i = 0; i < NB_LIMB_MAX; i++) {
@@ -572,6 +664,9 @@ void BlendLayers() {
         if (sOverlayWeight > 0.0f && InMask(sMask, i)) {
             MixRotation(sFinalJoints[i], sOverlay.joints[i], sOverlayWeight);
         }
+    }
+    if (sStraighten > 0.0f) {
+        Straighten(sFinalJoints, sStraighten);
     }
     if (sFadeWeight > 0.0f) {
         MixTranslation(sFinalJoints[0], sFadeFrom[0], sFadeWeight);
@@ -737,6 +832,13 @@ void Nabooru_OnPlayerUpdate() {
         StartCrossfade();
     }
     sFadeWeight = MAX(sFadeWeight - kCrossfadeStep, 0.0f);
+
+    f32 straighten = 0.0f;
+    if (sBody.move == &kStrafe || sBody.move == &kStrafeMirror) {
+        straighten = kStraightenMax *
+                     CLAMP((kLeanSpeed - player->actor.speedXZ) / (kLeanSpeed - kStraightSpeed), 0.0f, 1.0f);
+    }
+    Math_StepToF(&sStraighten, straighten, kStraightenStep);
     BlendLayers();
 }
 
