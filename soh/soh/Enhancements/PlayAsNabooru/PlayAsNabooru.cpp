@@ -260,7 +260,7 @@ constexpr f32 kRunThreshold = 4.5f;
 constexpr f32 kAttackStepThreshold = 1.0f; // Link's attacks slide him; above this, her legs step along
 constexpr f32 kCrossfadeStep = 0.2f;       // a new move blends in over 5 frames
 constexpr f32 kLayerFadeStep = 0.25f;
-constexpr s32 kKeepFoldedFrames = 4; // starting to walk from her folded-arms idle, her arms stay folded this long
+constexpr s32 kKeepFoldedFrames = 3; // starting to walk from her folded-arms idle, her arms stay folded this long
 // Strafing slowly she leans much less than the fighter's sidestep: at up to kStraightSpeed this much of the lean is
 // taken out, none of it from kLeanSpeed (Link's full sideways speed is 5.4).
 constexpr f32 kStraightenMax = 0.8f;
