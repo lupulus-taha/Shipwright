@@ -257,6 +257,7 @@ constexpr f32 kRunThreshold = 4.5f;
 constexpr f32 kAttackStepThreshold = 1.0f; // Link's attacks slide him; above this, her legs step along
 constexpr f32 kCrossfadeStep = 0.2f;       // a new move blends in over 5 frames
 constexpr f32 kLayerFadeStep = 0.25f;
+constexpr s32 kKeepFoldedFrames = 4; // starting to walk from her folded-arms idle, her arms stay folded this long
 // Strafing slowly she leans much less than the fighter's sidestep: at up to kStraightSpeed this much of the lean is
 // taken out, none of it from kLeanSpeed (Link's full sideways speed is 5.4).
 constexpr f32 kStraightenMax = 0.8f;
@@ -291,6 +292,7 @@ const void* sLinkPrevAnim = nullptr; // Link's animation can stall while he move
 f32 sLinkPrevFrame = 0.0f;
 s32 sLinkStalledFrames = 0;
 s32 sLandingFrames = 0; // remaining frames of a quick landing
+s32 sKeepFolded = 0;    // remaining frames her arms stay folded as she starts walking
 bool sInAir = false;
 f32 sAirPeakY = 0.0f;    // highest point since leaving the ground
 std::string sForcedName; // test harness: show one animation frame instead of mirroring Link
@@ -501,6 +503,12 @@ enum class Dir { Forward, Back, Left, Right };
 // direction of travel relative to the way she faces
 Dir TravelDirection(Player* player) {
     s16 rel = player->actor.world.rot.y - player->actor.shape.rot.y;
+    // Link's direction of travel turns towards the stick over several frames: starting a sidestep it still points
+    // ahead, while he already plays his sidestep
+    const char* name = LinkAnimName(player->skelAnime.animation);
+    if (name != nullptr && strstr(name, "side_walk") != nullptr && rel != 0) {
+        return (rel > 0) ? Dir::Left : Dir::Right;
+    }
     if (ABS(rel) <= 0x2800) {
         return Dir::Forward;
     }
@@ -728,6 +736,7 @@ void Nabooru_OnPlayerUpdate() {
     f32 bodySpeed = 1.0f, overlaySpeed = 1.0f;
     bool shielding = player->stateFlags1 & PLAYER_STATE1_SHIELDING;
     bool freezeBody = false;
+    bool startFolded = false; // her arms stay folded as she sets off
 
     if (YieldsToLocomotion(body) && sLinkStalledFrames >= 2 && moving) {
         body = nullptr;
@@ -784,18 +793,38 @@ void Nabooru_OnPlayerUpdate() {
             overlay = HasAnimation(kIdle.anim) ? &kIdle : &kHips;
             sMask = Mask::Upper;
         }
-    } else if (IsAttack(body) && stepDistance > kAttackStepThreshold && HasAnimation(kFightWalk.anim)) {
-        // Link's slashes carry him forward: let her legs step instead of sliding.
-        overlay = &kFightWalk;
-        overlaySpeed = CLAMP(stepDistance / kFightWalkReferenceSpeed, 0.5f, 2.5f);
-        sMask = Mask::Legs;
+        // Setting off from her folded-arms idle, her arms stay folded for a moment: a light tap of the stick doesn't
+        // swing them about.
+        if (moving && !shielding && !sShowSwords && HasAnimation(kCrossedArms.anim)) {
+            if (sBody.move == &kCrossedArms || (sBody.move == &kFoldArms && OnceDone(sBody))) {
+                sKeepFolded = kKeepFoldedFrames;
+                startFolded = true;
+            }
+            if (sKeepFolded > 0) {
+                sKeepFolded--;
+                overlay = &kCrossedArms;
+                sMask = legsOnly ? Mask::Upper : Mask::Arms;
+            }
+        } else {
+            sKeepFolded = 0;
+        }
+    } else {
+        sKeepFolded = 0;
+        if (IsAttack(body) && stepDistance > kAttackStepThreshold && HasAnimation(kFightWalk.anim)) {
+            // Link's slashes carry him forward: let her legs step instead of sliding.
+            overlay = &kFightWalk;
+            overlaySpeed = CLAMP(stepDistance / kFightWalkReferenceSpeed, 0.5f, 2.5f);
+            sMask = Mask::Legs;
+        }
     }
 
-    // Standing still empty-handed, she folds her arms.
+    // Standing still empty-handed, she folds her arms (unless they still are: she only tapped the stick).
     if (body == &kIdle && overlay == nullptr && HasAnimation(kFoldArms.anim) && HasAnimation(kCrossedArms.anim)) {
-        bool folded = sBody.move == &kCrossedArms || (sBody.move == &kFoldArms && OnceDone(sBody));
+        bool folded = sBody.move == &kCrossedArms || (sBody.move == &kFoldArms && OnceDone(sBody)) ||
+                      (sOverlay.move == &kCrossedArms && sOverlayWeight >= 1.0f);
         body = folded ? &kCrossedArms : &kFoldArms;
     }
+    f32 foldedFrame = (sBody.move == &kCrossedArms) ? sBody.skel.curFrame : 0.0f;
 
     // The fighter's moves end in her fighting stance; with empty hands, let her arms come down once she's landed.
     if (!sShowSwords && overlay == nullptr && HasAnimation(kIdle.anim)) {
@@ -818,7 +847,13 @@ void Nabooru_OnPlayerUpdate() {
         StepLayer(sBody, player, bodySpeed);
     }
 
-    if (overlay != nullptr) {
+    if (startFolded) {
+        // her arms stay as they were: folded, at once
+        SetMove(sOverlay, overlay);
+        Animation_Change(&sOverlay.skel, (AnimationHeader*)sOverlay.anim, 1.0f, foldedFrame, LastFrame(overlay),
+                         ANIMMODE_LOOP_INTERP, 0.0f);
+        sOverlayWeight = 1.0f;
+    } else if (overlay != nullptr) {
         changed |= SetMove(sOverlay, overlay) && sOverlayWeight > 0.0f;
         sOverlayWeight = MIN(sOverlayWeight + kLayerFadeStep, 1.0f);
     } else {
