@@ -296,6 +296,7 @@ f32 sLinkPrevFrame = 0.0f;
 s32 sLinkStalledFrames = 0;
 s32 sLandingFrames = 0; // remaining frames of a quick landing
 s32 sKeepFolded = 0;    // remaining frames her arms stay folded as she starts walking
+bool sWasShielding = false;
 bool sInAir = false;
 f32 sAirPeakY = 0.0f;    // highest point since leaving the ground
 std::string sForcedName; // test harness: show one animation frame instead of mirroring Link
@@ -770,10 +771,16 @@ void Nabooru_OnPlayerUpdate() {
     InitLayer(sOverlay);
     UpdateEyes();
 
-    // Her scimitars are out whenever Link has a melee weapon in hand.
+    // Her scimitars are out whenever Link has a melee weapon in hand. She blocks with them too (Link with his shield,
+    // whether his sword is out or not): only while she blocks, Link's sword stays where it was.
+    bool shielding = player->stateFlags1 & PLAYER_STATE1_SHIELDING;
     sShowSwords = player->leftHandType == PLAYER_MODELTYPE_LH_SWORD ||
                   player->leftHandType == PLAYER_MODELTYPE_LH_SWORD_2 ||
-                  player->leftHandType == PLAYER_MODELTYPE_LH_BGS || player->leftHandType == PLAYER_MODELTYPE_LH_HAMMER;
+                  player->leftHandType == PLAYER_MODELTYPE_LH_BGS ||
+                  player->leftHandType == PLAYER_MODELTYPE_LH_HAMMER || shielding;
+    // Link's shield is up the moment he raises it: so are her blades
+    bool raisingGuard = shielding && !sWasShielding;
+    sWasShielding = shielding;
 
     if (!sForcedName.empty()) {
         SetMove(sBody, &sForced);
@@ -800,7 +807,6 @@ void Nabooru_OnPlayerUpdate() {
     const Move* body = MatchRule(link->animation);
     const Move* overlay = nullptr;
     f32 bodySpeed = 1.0f, overlaySpeed = 1.0f;
-    bool shielding = player->stateFlags1 & PLAYER_STATE1_SHIELDING;
     bool freezeBody = false;
     bool startFolded = false; // her arms stay folded as she sets off
 
@@ -934,7 +940,12 @@ void Nabooru_OnPlayerUpdate() {
         StepLayer(sOverlay, player, overlaySpeed);
     }
 
-    if (changed) {
+    if (raisingGuard) {
+        sFadeWeight = 0.0f;
+        if (overlay != nullptr) {
+            sOverlayWeight = 1.0f;
+        }
+    } else if (changed) {
         StartCrossfade();
     }
     sFadeWeight = MAX(sFadeWeight - kCrossfadeStep, 0.0f);
