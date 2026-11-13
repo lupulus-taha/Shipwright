@@ -553,10 +553,14 @@ LOW_LANDING_LEGS = 0.5  # how much of the landing's knee bend to take out
 NB_LEG_JOINTS = (0, 1, 2, 3, 4, 5, 6, 18)  # table rows: root translation and rotation, legs, waist
 
 
-def make_low_landing(jump, rest, clearance=None):
+LANDING_ARMS_FRAMES = 8  # empty-handed, her arms settle from the in-air pose to her sides over these frames
+
+
+def make_low_landing(jump, rest, clearance=None, arms_from=None):
     """The fighter's landing with her knees bent about half as much; her arms and upper body ease into `rest`
     over the second half instead of rising into her fighting stance. With `clearance` (she holds scimitars), any
-    frame where a blade would cut her takes more of `rest`'s upper body, until it doesn't."""
+    frame where a blade would cut her takes more of `rest`'s upper body, until it doesn't. With `arms_from` (her pose
+    in the air), her arms come down from it to `rest`'s instead of following the fighter's, which fling out wide."""
     out = []
     for f in range(len(jump)):
         settle = min(max((f - 8) / (len(jump) - 9), 0.0), 1.0)
@@ -566,13 +570,37 @@ def make_low_landing(jump, rest, clearance=None):
             frame[list(NB_LEG_JOINTS)] = legs[list(NB_LEG_JOINTS)]
             if clearance is None or clearance.count(frame) == 0:
                 break
+        if arms_from is not None:
+            t = min(max((f - 1) / LANDING_ARMS_FRAMES, 0.0), 1.0)
+            arms = blend_frames(arms_from, rest, t * t * (3 - 2 * t))
+            for limb in NB_L_ARM + NB_R_ARM:
+                frame[limb + 1] = arms[limb + 1]
         out.append(frame)
     return np.array(out)
 
 
-def make_bare_flip(flip, crouch, rest):
-    """The fighter's backflip for empty hands: the flight unchanged, then landing into a light crouch and rising
-    gradually towards standing relaxed instead of in her fighting stance (the game blends the rest into her idle)."""
+# Landing her flip, the fighter throws her right arm up, ready for her stance; empty-handed, Nabooru's right arm
+# mirrors her left (out and low, for balance) instead: flip frame -> how much.
+BARE_FLIP_ARM_MIRROR = {6: 0.5, 7: 1.0, 8: 1.0, 9: 1.0}
+
+
+def mirror_arm(frame, nb_limbs, reflections, src_arm, dst_arm):
+    """`dst_arm` posed as the mirror image of `src_arm` (relative to her torso)."""
+    out = frame.copy()
+    for src, dst in zip(src_arm, dst_arm):
+        parent = nb_limbs[dst].parent
+        out[dst + 1] = zyx_from_rot(reflections[parent] @ rot_zyx(frame[src + 1]) @ reflections[dst])
+    return out
+
+
+def make_bare_flip(flip, crouch, rest, nb_limbs, reflections):
+    """The fighter's backflip for empty hands: the flight unchanged, then landing into a light crouch (her right
+    arm mirroring her left) and rising gradually towards standing relaxed instead of in her fighting stance (the
+    game blends the rest into her idle)."""
+    flip = flip.copy()
+    for f, weight in BARE_FLIP_ARM_MIRROR.items():
+        mirrored = mirror_arm(flip[f], nb_limbs, reflections, NB_L_ARM, NB_R_ARM)
+        flip[f] = blend_frames(flip[f], mirrored, weight)
     out = flip.copy()
     out[8] = blend_frames(flip[8], crouch, 0.35)
     out[9] = blend_frames(blend_frames(flip[9], crouch, 0.75), rest, 0.35)
@@ -774,8 +802,9 @@ def main():
         "white-clothed Gerudo's folded arms, breathing and looking around")
     add("FoldArms", make_fold(tables["gPlayAsNabooruWhiteFoldArmsAnim"], stand0), "folding her arms")
 
-    add("Air", make_air(relaxed[0], mean_frame(nb_walk.table), nb_limbs, arm_out=25, elbow=45, hips=(40, 25),
-                        knees=(85, 65), lean=12), "in the air: knees drawn up, arms out")
+    air = make_air(relaxed[0], mean_frame(nb_walk.table), nb_limbs, arm_out=25, elbow=45, hips=(40, 25), knees=(85, 65),
+                   lean=12)
+    add("Air", air, "in the air: knees drawn up, arms out")
     run = tables["gPlayAsNabooruRunAnim"]
     lean = forward_lean(nb_limbs, run) - forward_lean(nb_limbs, nb_walk.table) + 4.0
     add("RunBack", make_run_back(run, nb_limbs, lean), f"run leaning back {lean:.1f} degrees, for running backwards")
@@ -787,11 +816,13 @@ def main():
              "ArmedRunBack": np.array([hold_blades(f, nb_limbs, HOLD_RUN) for f in make_run_back(run, nb_limbs, lean)])}
     jump = tables["gPlayAsNabooruJumpAnim"]
     soft = make_soft_landing(jump, relaxed[0])
-    add("LandLow", make_low_landing(jump, relaxed[0]), "landing with the knees half as bent, settling relaxed")
+    add("LandLow", make_low_landing(jump, relaxed[0], arms_from=air[0]),
+        "landing with the knees half as bent, arms coming down from the air, settling relaxed")
     armed["LandLowArmed"] = make_low_landing(jump, armed_idle[0], clearance)
     # Z-targeting with scimitars (side hops): settling into her fighting stance, which comes next
     armed["LandLowStance"] = make_low_landing(jump, tables["gPlayAsNabooruNeutralAnim"][0], clearance)
-    add("FlipBare", make_bare_flip(tables["gPlayAsNabooruFlipAnim"], soft[5], relaxed[0]),
+    reflections = choose_reflections(nb_limbs, nb_walk.table)
+    add("FlipBare", make_bare_flip(tables["gPlayAsNabooruFlipAnim"], soft[5], relaxed[0], nb_limbs, reflections),
         "backflip landing relaxed, for empty hands")
     for name, table in armed.items():
         clipping = sum(clearance.count(f) for f in table)
@@ -799,7 +830,6 @@ def main():
             sys.exit(f"{name}: scimitars cut through her body ({clipping} points)")
         add(name, table, "with scimitars, blades clear of her body")
 
-    reflections = choose_reflections(nb_limbs, nb_walk.table)
     side = tables["gPlayAsNabooruSidestepAnim"]
     side_mirror = mirror_table(side, nb_limbs, reflections)
     err = verify_mirror(nb_limbs, side, side_mirror)
