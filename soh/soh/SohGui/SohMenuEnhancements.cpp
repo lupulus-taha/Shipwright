@@ -722,6 +722,11 @@ void SohMenu::AddMenuEnhancements() {
                 gSaveContext.nextTransitionType = TRANS_TYPE_FADE_BLACK;
             }
         });
+    AddWidget(path, "Honoured by Jackals", WIDGET_CVAR_CHECKBOX)
+        .CVar("gPlayAsNabooru.HonouredByJackals")
+        .Options(CheckboxOptions().Tooltip(
+            "Jackals (Play as Nabooru mod) are enemies: they turn on whoever comes near them. They do not attack "
+            "one they honour: they only run up to watch her, and back off when approached."));
     AddWidget(path, "Enemy Health Bars", WIDGET_CVAR_CHECKBOX)
         .CVar(CVAR_ENHANCEMENT("EnemyHealthBar"))
         .Options(CheckboxOptions().Tooltip("Renders a health bar for Enemies when Z-Targeted."));

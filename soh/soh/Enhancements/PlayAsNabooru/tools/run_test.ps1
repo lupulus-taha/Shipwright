@@ -14,6 +14,7 @@ param(
     [string]$Mods = "",
     [int]$Width = 960,
     [int]$Height = 720,
+    [int]$Volume = 0, # master volume in percent: silent unless a test is about sound
     [int]$TimeoutSeconds = 300
 )
 $ErrorActionPreference = "Stop"
@@ -35,7 +36,7 @@ Remove-Item "$TestHome\Save" -Recurse -Force -ErrorAction SilentlyContinue
 $config = [ordered]@{
     ConfigVersion = 7
     CVars         = @{
-        gSettings     = @{ BootSequence = 4; Volume = @{ Master = 0 }; OpenMenuBar = 0 }
+        gSettings     = @{ BootSequence = 4; Volume = @{ Master = $Volume }; OpenMenuBar = 0 }
         gEnhancements = @{ PlayAsNabooru = 1; DisableLOD = 1 }
     }
     Window        = @{

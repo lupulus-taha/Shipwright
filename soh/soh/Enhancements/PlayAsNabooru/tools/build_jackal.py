@@ -11,7 +11,7 @@ writes C), which does not have to be installed, only present on disk:
           [--out x64/Debug/mods/jackal.o2r] [--blend FILE] [--preview DIR] [--no-export]
 
 --preview renders contact sheets of the model and of every animation; set the environment variable JACKAL_REPORT to
-an animation's name (Idle, Walk, Run) to print what each leg does on each of its frames.
+an animation's name (Idle, Walk, Run, ...) to print what each leg does on each of its frames.
 
 In the style of the N64 game: about 400 triangles, one flex skeleton of 21 limbs with every vertex on a single limb,
 two small 16-bit textures (fur 32x64, face 64x32, each within the console's 4 KB texture memory), lit and fogged like
@@ -493,6 +493,7 @@ class Pose:
         self.swing = {}  # (worked out) leg -> how far its upper part is swung from rest, against the body
         self.wanted = {}  # (worked out) leg -> (the swing it would take without limits, where its paw is)
         self.slip = 0.0  # (worked out) degrees a leg on the ground would have had to swing beyond its limits
+        self.free = False  # its paws are not standing on the ground (leaping, lying): nothing to report about them
 
     def solve(self):
         """-> ({limb: rotation from rest, in the armature's axes}, how far out of reach the worst paw is)"""
@@ -637,7 +638,176 @@ def run_pose(t):
     return pose
 
 
-ANIMATIONS = {"Idle": (60, idle_pose), "Walk": (WALK_FRAMES, walk_pose), "Run": (RUN_FRAMES, run_pose)}
+# ---- the poses of a jackal that has noticed someone, and of a fight. These are built from a few key poses.
+def key(move=(0.0, 0.0, 0.0), paws=None, free=False, **turns):
+    """a pose: where the body is, the paws (front, hind or each leg by name) and how the limbs are turned"""
+    pose = Pose()
+    pose.move = list(move)
+    pose.free = free
+    pose.turn = {limb: tuple(turn) for limb, turn in turns.items()}
+    for name, paw in (paws or {}).items():
+        for leg in LEGS:
+            if leg.startswith(name):
+                pose.paws[leg] = paw
+    return pose
+
+
+def between(a, b, q):
+    """pose a, moved q of the way to pose b"""
+    def mid(x, y):
+        return x + (y - x) * q
+
+    pose = Pose()
+    pose.move = [mid(x, y) for x, y in zip(a.move, b.move)]
+    pose.free = a.free or b.free
+    for limb in set(a.turn) | set(b.turn):
+        pose.turn[limb] = tuple(mid(x, y) for x, y in zip(a.turn.get(limb, (0, 0, 0)), b.turn.get(limb, (0, 0, 0))))
+    for leg in LEGS:
+        (a_at, a_pitch), (b_at, b_pitch) = a.paws.get(leg, ((0.0, 0.0), 0.0)), b.paws.get(leg, ((0.0, 0.0), 0.0))
+        pose.paws[leg] = ((mid(a_at[0], b_at[0]), mid(a_at[1], b_at[1])), mid(a_pitch, b_pitch))
+    return pose
+
+
+def keyed(keys, frame):
+    """the pose on a frame of [(frame, pose, how it is reached)]: "smooth", "in" (gathering speed, as in a fall),
+    "out" (losing speed) or "even"."""
+    for (f0, a, _), (f1, b, how) in zip(keys, keys[1:]):
+        if frame <= f1:
+            q = (frame - f0) / (f1 - f0)
+            return between(a, b, {"smooth": ease(q), "in": q * q, "out": 1 - (1 - q) ** 2, "even": q}[how])
+    return keys[-1][1]
+
+
+EARS_BACK = {"EarL": (32.0, -9.0, 0.0), "EarR": (32.0, 9.0, 0.0)}
+
+
+def alert_stance():
+    """it has seen someone: drawn up, head high, ears pricked, tail held out"""
+    return key(move=(-0.5, 0.1, 0.0), Root=(1.0, 0, 0), Chest=(2.0, 0, 0), Neck=(13.0, 0, 0), Head=(-9.0, 0, 0),
+               EarL=(-9.0, 5.0, 0), EarR=(-9.0, -5.0, 0), Jaw=(0, 0, 0), Tail1=(-16.0, 0, 0), Tail2=(-12.0, 0, 0))
+
+
+def alert_pose(t):
+    """staring, all but still: only its breath and the end of its tail move"""
+    pose = alert_stance()
+    breath = wave(t, 0, 2)
+    pose.move[1] += 0.08 * breath
+    pose.turn["Chest"] = (2.0 + 0.6 * breath, 0.0, 0.0)
+    pose.turn["Head"] = (-9.0 - 0.5 * breath, 0.0, 0.0)
+    pose.turn["Tail2"] = (-12.0 + 1.5 * wave(t, 0.2, 2), 2.5 * wave(t, 0.1), 0.0)
+    return pose
+
+
+HOWL_FRAMES = 40
+
+
+def howl_pose(t):
+    """calling the others: the head thrown back, the muzzle to the sky"""
+    def call(sway):
+        return key(move=(-1.2, -0.4, 0.0), Root=(3.0, 0, 0), Chest=(5.0, 0, 0), Neck=(20.0 + sway, 0, 0),
+                   Head=(36.0 + sway, 0, 0), Jaw=(-20.0 - 2 * sway, 0, 0), Tail1=(-8.0, 0, 0), Tail2=(-6.0, 0, 0),
+                   **EARS_BACK)
+
+    gather = key(move=(-0.8, -0.8, 0.0), Root=(1.0, 0, 0), Chest=(0.0, 0, 0), Neck=(-6.0, 0, 0), Head=(4.0, 0, 0),
+                 Jaw=(-3.0, 0, 0), Tail1=(-12.0, 0, 0), Tail2=(-10.0, 0, 0), EarL=(10.0, 0, 0), EarR=(10.0, 0, 0))
+    last = HOWL_FRAMES - 1
+    return keyed([(0, alert_stance(), "even"), (4, gather, "smooth"), (10, call(-2.0), "smooth"),
+                  (20, call(2.0), "smooth"), (31, call(-1.0), "smooth"), (last, alert_stance(), "smooth")], t * last)
+
+
+def threat_stance():
+    """about to attack: crouched over its front paws, head low, ears flat, teeth bared, tail stiff"""
+    return key(move=(1.0, -2.6, 0.0), paws={"Front": ((2.0, 0.0), 0.0), "Hind": ((-1.0, 0.0), 0.0)},
+               Root=(-5.0, 0, 0), Chest=(-3.0, 0, 0), Neck=(-30.0, 0, 0), Head=(24.0, 0, 0), Jaw=(-13.0, 0, 0),
+               Tail1=(-30.0, 0, 0), Tail2=(-16.0, 0, 0), **EARS_BACK)
+
+
+def threat_pose(t):
+    """snarling: its jaw trembles, its sides heave, its tail jerks"""
+    pose = threat_stance()
+    breath, shake = wave(t, 0, 2), wave(t, 0, 5)
+    pose.move = [1.0 + 0.25 * breath, -2.6 + 0.15 * breath, 0.3 * wave(t, 0.2)]
+    pose.turn["Chest"] = (-3.0 + 0.8 * breath, 0.0, -1.2 * wave(t, 0.2))
+    pose.turn["Head"] = (24.0 + 0.8 * shake, 0.0, 1.5 * wave(t, 0.45))
+    pose.turn["Jaw"] = (-13.0 - 2.5 * shake, 0.0, 0.0)
+    pose.turn["Tail1"] = (-30.0, 4.0 * wave(t, 0.1, 2), 0.0)
+    pose.turn["Tail2"] = (-16.0, 6.0 * wave(t, 0.25, 2), 0.0)
+    return pose
+
+
+# The actor moves the jackal through its leap (EnJackal.cpp): it crouches until ATTACK_LEAP, is in the air until
+# about ATTACK_LAND and bites as it lands.
+ATTACK_FRAMES, ATTACK_LEAP, ATTACK_LAND = 17, 5, 10
+
+
+def attack_pose(t):
+    """a leap at its prey: crouching back, flying with jaws wide, snapping as it lands"""
+    crouch = key(move=(-3.0, -4.6, 0.0), paws={"Front": ((1.5, 0.0), 0.0), "Hind": ((2.5, 0.0), 0.0)},
+                 Root=(6.0, 0, 0), Chest=(-9.0, 0, 0), Neck=(-27.0, 0, 0), Head=(23.0, 0, 0), Jaw=(-4.0, 0, 0),
+                 Tail1=(-12.0, 0, 0), Tail2=(-6.0, 0, 0), **EARS_BACK)
+    flight = key(move=(4.0, 1.5, 0.0), free=True,
+                 paws={"Front": ((9.0, 5.0), -36.0), "Hind": ((-8.0, 3.0), -32.0)},
+                 Root=(5.0, 0, 0), Chest=(2.0, 0, 0), Neck=(-18.0, 0, 0), Head=(10.0, 0, 0), Jaw=(-38.0, 0, 0),
+                 Tail1=(-38.0, 0, 0), Tail2=(-24.0, 0, 0), **EARS_BACK)
+    bite = key(move=(3.0, -3.2, 0.0), free=True, paws={"Front": ((3.5, 0.0), 6.0), "Hind": ((-3.5, 1.6), -22.0)},
+               Root=(-8.0, 0, 0), Chest=(-4.0, 0, 0), Neck=(-31.0, 0, 0), Head=(30.0, 0, 0), Jaw=(-5.0, 0, 0),
+               Tail1=(-24.0, 0, 0), Tail2=(-20.0, 0, 0), **EARS_BACK)
+    landed = key(move=(1.6, -3.4, 0.0), paws={"Front": ((2.5, 0.0), 0.0), "Hind": ((-1.0, 0.0), 0.0)},
+                 Root=(-6.0, 0, 0), Chest=(-3.0, 0, 0), Neck=(-33.0, 0, 0), Head=(26.0, 0, 0), Jaw=(0.0, 0, 0),
+                 Tail1=(-26.0, 0, 0), Tail2=(-12.0, 0, 0), **EARS_BACK)
+    return keyed([(0, threat_stance(), "even"), (ATTACK_LEAP - 1, crouch, "out"), (ATTACK_LEAP + 3, flight, "out"),
+                  (ATTACK_LAND, bite, "in"), (ATTACK_LAND + 2, landed, "smooth"),
+                  (ATTACK_FRAMES - 1, threat_stance(), "smooth")], t * (ATTACK_FRAMES - 1))
+
+
+HIT_FRAMES = 10
+
+
+def hit_pose(t):
+    """struck: its head is thrown up and aside, it staggers back and finds its feet again"""
+    recoil = key(move=(-2.5, -1.0, 1.0),
+                 paws={"FrontLegL": ((-1.0, 2.6), -22.0), "FrontLegR": ((-1.5, 0.0), 0.0), "Hind": ((1.5, 0.0), 0.0)},
+                 Root=(3.0, 0, 7.0), Chest=(2.0, -10.0, 0), Neck=(6.0, -24.0, 0), Head=(4.0, -16.0, 16.0),
+                 Jaw=(-26.0, 0, 0), Tail1=(18.0, 0, 0), Tail2=(14.0, 0, 0), **EARS_BACK)
+    stagger = key(move=(-3.5, -3.2, -0.6), paws={"Front": ((-2.5, 0.0), 0.0), "Hind": ((0.5, 0.0), 0.0)},
+                  Root=(2.0, 0, -4.0), Chest=(-2.0, 4.0, 0), Neck=(-12.0, 6.0, 0), Head=(8.0, 4.0, -6.0),
+                  Jaw=(-10.0, 0, 0), Tail1=(8.0, 0, 0), Tail2=(6.0, 0, 0), **EARS_BACK)
+    return keyed([(0, threat_stance(), "even"), (2, recoil, "out"), (5, stagger, "smooth"),
+                  (HIT_FRAMES - 1, threat_stance(), "smooth")], t * (HIT_FRAMES - 1))
+
+
+DIE_FRAMES = 28
+LYING = 4.6 - BONES["Root"][1][1]  # how far its body comes down to lie on its side
+
+
+def die_pose(t):
+    """thrown back by the last blow, its legs give way and it falls on its left side and lies still"""
+    def lying(drop, roll, fold, jaw, neck):
+        # (its legs go with its body: the paws are given from where the body is)
+        f, u = -3.5, LYING + drop
+        return key(move=(f, u, 9.0), free=True,
+                   paws={"Front": ((f + 3.0 + fold, u + 2.0 + fold), -24.0), "Hind": ((f - 3.0, u + 2.0 + fold), -28.0)},
+                   Root=(0.0, 3.0, roll), Chest=(0.0, -4.0, 2.0), Neck=(neck, 4.0, 0), Head=(6.0, 0, 0),
+                   Jaw=(jaw, 0, 0), Tail1=(14.0, 0, 0), Tail2=(12.0, 0, 0), EarL=(20.0, 0, 0), EarR=(20.0, 0, 0))
+
+    thrown = key(move=(-2.0, 0.1, 0.5), paws={"Front": ((-1.0, 5.0), -30.0), "Hind": ((1.5, 0.0), 0.0)},
+                 Root=(10.0, 0, 6.0), Chest=(10.0, 0, 0), Neck=(24.0, 10.0, 0), Head=(14.0, 10.0, 10.0),
+                 Jaw=(-32.0, 0, 0), Tail1=(-10.0, 0, 0), Tail2=(-4.0, 0, 0), **EARS_BACK)
+    giving = key(move=(-3.0, -6.5, 3.5), free=True, paws={"Front": ((-2.0, -3.0), -16.0), "Hind": ((0.0, -2.5), -12.0)},
+                 Root=(1.0, 0, 38.0), Chest=(-4.0, 0, 6.0), Neck=(8.0, 12.0, 0), Head=(4.0, 8.0, 8.0),
+                 Jaw=(-22.0, 0, 0), Tail1=(4.0, 0, 0), Tail2=(6.0, 0, 0), **EARS_BACK)
+    last = DIE_FRAMES - 1
+    return keyed([(0, threat_stance(), "even"), (4, thrown, "out"), (9, giving, "in"),
+                  (13, lying(0.0, 86.0, 0.0, -16.0, -10.0), "in"), (16, lying(1.3, 81.0, 1.0, -20.0, -4.0), "out"),
+                  (19, lying(0.0, 87.0, 0.0, -12.0, -16.0), "in"), (last, lying(0.0, 88.0, 1.2, -9.0, -20.0), "smooth")],
+                 t * last)
+
+
+# animation -> (frames, pose at 0..1, whether it goes round: the others play once, from the first frame to the last)
+ANIMATIONS = {"Idle": (60, idle_pose, True), "Walk": (WALK_FRAMES, walk_pose, True), "Run": (RUN_FRAMES, run_pose, True),
+              "Alert": (40, alert_pose, True), "Howl": (HOWL_FRAMES, howl_pose, False),
+              "Threat": (20, threat_pose, True), "Attack": (ATTACK_FRAMES, attack_pose, False),
+              "Hit": (HIT_FRAMES, hit_pose, False), "Die": (DIE_FRAMES, die_pose, False)}
 
 
 def make_actions(armature):
@@ -645,7 +815,7 @@ def make_actions(armature):
     rest = {bone.name: bone.matrix_local.to_quaternion() for bone in armature.data.bones}
     armature.animation_data_create()
     actions = {}
-    for name, (frames, pose_at) in ANIMATIONS.items():
+    for name, (frames, pose_at, loops) in ANIMATIONS.items():
         action = bpy.data.actions.new(name)
         action.use_fake_user = True
         armature.animation_data.action = action
@@ -653,9 +823,10 @@ def make_actions(armature):
         worst = 0.0
         swings = {}
         for frame in range(frames):
-            pose = pose_at(frame / frames)
+            pose = pose_at(frame / frames if loops else frame / (frames - 1))
             turns, short = pose.solve()
-            worst = max(worst, short, pose.slip)
+            if not pose.free:
+                worst = max(worst, short, pose.slip)
             if os.environ.get("JACKAL_REPORT") == name:  # for tuning a gait: every leg on every frame
                 print(f"jackal: {frame:2}: " + "  ".join(
                     f"{leg[:1]}{leg[-1]} {'ground' if o[1] <= 0 else 'air   '} f{o[0]:6.1f} swing {w:5.0f}" for leg, (w, o) in pose.wanted.items()))
@@ -834,6 +1005,8 @@ def main():
                                            for frame in range(0, frames, max(1, frames // 8))], columns=4)
         show(armature, actions["Run"])
         render_previews(args.preview, [(f"runfront_{frame:02}", 30, 14, frame) for frame in range(0, 8, 2)], columns=4)
+        show(armature, actions["Die"])
+        render_previews(args.preview, [(f"diefront_{frame:02}", 30, 14, frame) for frame in (4, 9, 13, 27)], columns=4)
     show(armature, actions["Idle"])
     if args.blend:
         bpy.ops.wm.save_as_mainfile(filepath=str(args.blend))

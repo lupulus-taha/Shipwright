@@ -1062,6 +1062,7 @@ uint32_t OTRGlobals::GetInterpolationFPS() {
 extern "C" void OTRMessage_Init();
 extern "C" void AudioMgr_CreateNextAudioBuffer(s16* samples, u32 num_samples);
 extern "C" void AudioPlayer_Play(const uint8_t* buf, uint32_t len);
+extern "C" void ModSound_Mix(int16_t* samples, uint32_t frames);
 int AudioPlayer_Buffered(void);
 extern "C" int AudioPlayer_GetDesiredBuffered(void);
 std::unordered_map<std::string, ExtensionEntry> ExtensionCache;
@@ -1096,6 +1097,8 @@ void OTRAudio_Thread() {
         for (int i = 0; i < AUDIO_FRAMES_PER_UPDATE; i++) {
             AudioMgr_CreateNextAudioBuffer(audio_buffer + i * (num_audio_samples * NUM_AUDIO_CHANNELS),
                                            num_audio_samples);
+            // Play as Nabooru mod: its sound files, on top of the game's audio
+            ModSound_Mix(audio_buffer + i * (num_audio_samples * NUM_AUDIO_CHANNELS), num_audio_samples);
         }
 
         AudioPlayer_Play((u8*)audio_buffer,

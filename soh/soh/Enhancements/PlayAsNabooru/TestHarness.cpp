@@ -12,6 +12,9 @@
 //   shots N EVERY NAME <input> hold the input for N frames, taking a screenshot every EVERY frames
 //   shot NAME                 screenshot (gameplay pauses until it's taken)
 //   log on|off                per-frame log to <out>/log.txt (also the player's voice sounds: "sfx ID")
+//   actors NAME               also log every actor of that name (as in the actor database, e.g. En_Jackal) each
+//                             frame: place, speed, animation frame, health, and how far the player is
+//   audio on|off              also log how loud the game's audio and the mod's sound files are, when the latter play
 //   mark TEXT                 write TEXT into the log
 //   knock TYPE                knock the player back the way enemies do (1 small, 2 large), with Link's voice lines
 //   hit TYPE                  hit the player (0 light, 1 knockdown, 2 small knockback, 3 frozen, 4 shock)
@@ -30,6 +33,8 @@
 #include <libultraship/bridge/consolevariablebridge.h>
 #include "soh/Enhancements/game-interactor/GameInteractor.h"
 #include "soh/ShipInit.hpp"
+#include "soh/ActorDB.h"
+#include "soh/Enhancements/PlayAsNabooru/ModSound.h"
 #include <ship/Context.h>
 #include <ship/window/Window.h>
 #include <cstdio>
@@ -59,6 +64,8 @@ enum class Kind {
     Hold,
     Shot,
     Log,
+    Actors,
+    Audio,
     Mark,
     Hit,
     Knock,
@@ -93,6 +100,8 @@ int sStepFrame = 0;
 std::string sOutDir;
 FILE* sLog = nullptr;
 bool sLogging = false;
+std::string sLogActors; // actors of this name are logged too
+bool sLogAudio = false;
 bool sWaitingForShot = false;
 int sShotWait = 0;
 int sFrame = 0;
@@ -160,6 +169,9 @@ void LoadScript(const char* path) {
             in >> step.text;
         } else if (cmd == "log") {
             step.kind = Kind::Log;
+            in >> step.text;
+        } else if (cmd == "actors" || cmd == "audio") {
+            step.kind = (cmd == "actors") ? Kind::Actors : Kind::Audio;
             in >> step.text;
         } else if (cmd == "mark") {
             step.kind = Kind::Mark;
@@ -237,6 +249,32 @@ void LogFrame() {
             sqrtf(SQ(player->actor.world.pos.x - sLastPos.x) + SQ(player->actor.world.pos.z - sLastPos.z)),
             player->fallDistance);
     sLastPos = player->actor.world.pos;
+
+    if (!sLogActors.empty()) {
+        for (s32 category = 0; category < ACTORCAT_MAX; category++) {
+            for (Actor* actor = gPlayState->actorCtx.actorLists[category].head; actor != nullptr; actor = actor->next) {
+                if (ActorDB::Instance->RetrieveEntry(actor->id).name != sLogActors) {
+                    continue;
+                }
+                // (every actor of the mod starts with its animation state)
+                SkelAnime* skel = (SkelAnime*)(actor + 1);
+                fprintf(sLog,
+                        "%5d   %s at %7.1f %6.1f %7.1f yaw %04X spd %5.1f vy %5.1f anim %-18s %5.1f hp %2d "
+                        "flags %08X bg %04X dist %6.1f\n",
+                        sFrame, sLogActors.c_str(), actor->world.pos.x, actor->world.pos.y, actor->world.pos.z,
+                        (u16)actor->shape.rot.y, actor->speedXZ, actor->velocity.y, ShortAnimName(skel->animation),
+                        skel->curFrame, actor->colChkInfo.health, actor->flags, actor->bgCheckFlags,
+                        actor->xzDistToPlayer);
+            }
+        }
+    }
+    if (sLogAudio) {
+        int game = 0, mod = 0;
+        ModSound_DebugPeaks(&game, &mod);
+        if (mod > 0) {
+            fprintf(sLog, "%5d audio game %5d mod %5d\n", sFrame, game, mod);
+        }
+    }
 
     // which of the voice clips are sounding (logged when that changes)
     static const u16 kVoices[] = { NA_SE_EN_GERUDOFT_ATTACK, NA_SE_EN_GERUDOFT_DAMAGE, NA_SE_EN_GERUDOFT_DEAD,
@@ -350,6 +388,12 @@ void OnFrameStart() {
                 break;
             case Kind::Log:
                 sLogging = (step.text == "on");
+                break;
+            case Kind::Actors:
+                sLogActors = step.text;
+                break;
+            case Kind::Audio:
+                sLogAudio = (step.text == "on");
                 break;
             case Kind::Mark:
                 if (sLog) {
