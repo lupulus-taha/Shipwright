@@ -153,7 +153,8 @@ const Move kDamage = {
 }; // stops before she raises her sword again
 const Move kKnockdown = { "Knockdown", GEN(Defeat), GEN_SWORDS(Defeat), Mode::Sync, 0, 12 };
 const Move kDown = { "Down", GEN(Defeat), GEN_SWORDS(Defeat), Mode::Sync, 12, 22 };
-const Move kGetUp = { "GetUp", GEN(Crouch), nullptr, Mode::Once, 10, 0, 0.6f };
+// getting up from the kneel (the guard's kneel played backwards), over Link's whole get-up
+const Move kGetUp = { "GetUp", GEN(Crouch), nullptr, Mode::Sync, 10, 0 };
 const Move kDeath = { "Death", GEN(Faint), nullptr, Mode::Once, 0, -1, 1.0f };
 // how she holds the scimitars when the current animation has no sword data (e.g. running with swords drawn)
 const char* const kDefaultSwords = GEN_SWORDS(Carry);
