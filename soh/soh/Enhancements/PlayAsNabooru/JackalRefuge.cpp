@@ -6,6 +6,8 @@
 //  - the game's own lens flare and glare, when looking towards that sun
 // It also tints the picture slightly warm and turns on the game's hot-room heat haze (the slow wobble of the whole
 // view in Death Mountain Crater), without the heat timer that comes with real hot rooms.
+//
+// The area's inhabitants are spawned here as well: one jackal (EnJackal.cpp) by the oasis pit.
 
 #include <libultraship/bridge/consolevariablebridge.h>
 #include "soh/Enhancements/game-interactor/GameInteractor.h"
@@ -20,6 +22,7 @@ extern "C" {
 #include "variables.h"
 extern PlayState* gPlayState;
 void JackalRefuge_Draw(PlayState* play);
+Actor* Jackal_Spawn(PlayState* play, f32 x, f32 y, f32 z, s16 yaw);
 }
 
 #define JACKAL_REFUGE_DL(name) ((Gfx*)"__OTR__scenes/shared/jackal_refuge_scene/jackal_refuge_" name)
@@ -28,6 +31,10 @@ void JackalRefuge_Draw(PlayState* play);
 // (-z), and above the horizon.
 static const float SUN_AZIMUTH = 250.0f;
 static const float SUN_ELEVATION = 40.0f;
+// A jackal stands by the east edge of the oasis pit (the pit's middle is at -1600, 0), looking towards where the
+// player arrives.
+static const Vec3f JACKAL_POS = { -1130.0f, 0.0f, -60.0f };
+static const s16 JACKAL_YAW = 0x6B00;
 // The warm tint over the picture.
 static const Color_RGBA8 HEAT_TINT = { 255, 150, 40, 16 };
 
@@ -61,6 +68,12 @@ static void RegisterJackalRefuge() {
         if (gPlayState != NULL && gPlayState->sceneNum == SCENE_JACKAL_REFUGE &&
             !CVarGetInteger(CVAR_SETTING("A11yNoHeatHaze"), 0)) {
             *should = true;
+        }
+    });
+    // the area's inhabitants arrive with the player (the scene itself lists no actors: ours have no fixed ids)
+    COND_ID_HOOK(OnActorInit, ACTOR_PLAYER, true, [](void* actor) {
+        if (gPlayState != NULL && gPlayState->sceneNum == SCENE_JACKAL_REFUGE) {
+            Jackal_Spawn(gPlayState, JACKAL_POS.x, JACKAL_POS.y, JACKAL_POS.z, JACKAL_YAW);
         }
     });
     // after the whole world is drawn, under the HUD
