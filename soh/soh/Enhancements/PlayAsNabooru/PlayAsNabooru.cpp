@@ -200,7 +200,7 @@ const Move kSideHopLandL = { .name = "SideHopLandL",
                              .bareAnim = GEN(SideHopL) };
 constexpr f32 kSideHopGroundFrames = 1.0f; // Link's frames of the hop during which her feet stay on the ground
 const Move kLand = { "Land", GEN(Jump), GEN_SWORDS(Jump), Mode::Sync, 1, 16 }; // after a long drop, standing
-// after a hop or a medium drop: the same landing with her knees half as bent, settling into her idle
+// after a hop or a short or medium drop: the same landing with her knees half as bent, settling into her idle
 const Move kLandShort = { .name = "LandShort",
                           .anim = GEN(LandLowArmed),
                           .swords = nullptr,
@@ -234,7 +234,7 @@ const Move kHurtRise = { .name = "HurtRise",
 // after a long drop, moving on (Link rolls): a quick dip, then her walk/run takes over
 const Move kLandQuick = { "LandQuick", GEN(Jump), GEN_SWORDS(Jump), Mode::Once, 4, 14, 2.0f };
 constexpr s32 kLandQuickFrames = 5;
-constexpr f32 kLongDrop = 80.0f; // Link's own threshold: shorter drops have no landing
+constexpr f32 kLongDrop = 80.0f; // Link's own threshold: he rolls out of longer drops when moving on
 // getting hurt
 const Move kDamage = {
     "Damage", GEN(Damage), GEN_SWORDS(Damage), Mode::Sync, 0, 7
@@ -287,8 +287,8 @@ struct Rule {
 };
 
 const std::vector<Rule> kRules = {
-    // "250jump" is the jump up to a ledge; "landing_roll" and "short_landing" are handled by her own landing logic
-    { { "climb", "water_fall", "uma_", "swimer_", "step_up", "250jump", "landing_roll", "short_landing" }, nullptr },
+    // "250jump" is the jump up to a ledge; "landing_roll" is handled by her own landing logic
+    { { "climb", "water_fall", "uma_", "swimer_", "step_up", "250jump", "landing_roll" }, nullptr },
     { { "power_kiru_start" }, &kSpinWindup },
     { { "power_kiru" }, &kSpinCharge }, // holding a charged spin, also while walking
     { { "rolling_kiru_end", "rollkiru_end" }, &kSpinEnd },
@@ -320,7 +320,8 @@ const std::vector<Rule> kRules = {
     { { "_downA", "ice_down" }, &kKnockdown },
     { { "_hit", "_shit", "damage" }, &kDamage },
     // Link's "normal_landing" is his fall, and also his touchdown after a long drop (see Nabooru_OnPlayerUpdate)
-    { { "run_jump_end", "front_jump_end", "anchor_landing" }, &kLandShort },
+    // (Link's "short_landing" is his landing after a drop of up to 80 units)
+    { { "run_jump_end", "front_jump_end", "anchor_landing", "short_landing" }, &kLandShort },
     { { "normal_run_jump" }, &kRunJump }, // leaping off a ledge from a run
     { { "landing", "normal_jump", "run_jump", "front_jump" }, &kAirborne },
     { { "talk" }, &kHips },
@@ -1016,7 +1017,8 @@ void Nabooru_OnPlayerUpdate() {
         body = &kLandShortStance;
     }
 
-    // Landing after a long drop while moving on (Link rolls): a quick dip into her walk/run. Short drops have none.
+    // Landing after a long drop while moving on (Link rolls): a quick dip into her walk/run. (After shorter drops she
+    // lands as from a hop, giving way to her walk/run if she moves on.)
     if (!grounded) {
         sAirPeakY = sInAir ? MAX(sAirPeakY, player->actor.world.pos.y) : player->actor.world.pos.y;
         sInAir = true;
