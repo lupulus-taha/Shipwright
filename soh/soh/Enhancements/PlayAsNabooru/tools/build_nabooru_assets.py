@@ -779,62 +779,34 @@ def make_hurt_landing(rest, nb_limbs, feet, air, arms_cfg, clearance=None, bare=
     return land, np.array(hold), np.array(rise)
 
 
-# Running off a ledge, Link leaps (his run_jump: 13 frames, then he holds the last while he falls): a push-off leaning
-# into it, legs trailing, then a running stride in the air, knees bent, arms swinging against the legs. Hers follows
-# his, frame by frame: her thighs, shins, upper arms and forearms point where his do, her pelvis turns as his does and
-# her spine bends as much as his (from her own posture), her hips rise and sink in proportion; her head stays level.
-RUN_JUMP_LINK = "normal_run_jump"
-RUN_JUMP_HEAD_STEADY = 0.6
+# Running off a ledge, Link leaps (his run_jump: 13 frames, then he holds the last while he falls). Hers is her own run
+# carried into the air: her push-off and the stride in the air that follows (run frames 3 to 5), that stride held a
+# little longer and a little wider, her upper body a little more upright, easing into her pose in the air for the fall.
+# Per key (one per frame of his): the frame of her run, how much wider her stride is, how much more upright her upper
+# body is (degrees) and how far she is into her pose in the air.
+RUN_JUMP = [(3.0, 1.0, 0, 0.0), (3.8, 1.0, 1, 0.0), (4.4, 1.05, 2, 0.0), (4.8, 1.1, 3, 0.0), (5.0, 1.15, 4, 0.0),
+            (5.15, 1.15, 5, 0.0), (5.3, 1.15, 5, 0.0), (5.4, 1.15, 5, 0.05), (5.5, 1.15, 5, 0.15), (5.5, 1.1, 5, 0.3),
+            (5.5, 1.05, 5, 0.5), (5.5, 1.0, 5, 0.7), (5.5, 1.0, 5, 0.85)]
 RUN_JUMP_ARM_LIFT = range(5, 65, 5)  # degrees an arm may be raised out to the side to keep its scimitar off her
-LINK_STAND = "normal_wait"  # his standing pose, the reference for his pelvis and spine
-# her bones (limb, child) and his
-RUN_JUMP_BONES = [((1, 2), ("L_THIGH", "L_SHIN")), ((2, 3), ("L_SHIN", "L_FOOT")),
-                  ((4, 5), ("R_THIGH", "R_SHIN")), ((5, 6), ("R_SHIN", "R_FOOT")),
-                  ((8, 9), ("L_SHOULDER", "L_FOREARM")), ((9, 10), ("L_FOREARM", "L_HAND")),
-                  ((11, 12), ("R_SHOULDER", "R_FOREARM")), ((12, 13), ("R_FOREARM", "R_HAND"))]
 
 
-def aim_bone(frame, nb_limbs, limb, child, direction):
-    """`limb` turned (as a whole, at its joint) so that it points at `child` along `direction` (model space)."""
-    _, P = fk(nb_limbs, frame)
-    d = (P[child] - P[limb]) / np.linalg.norm(P[child] - P[limb])
-    want = np.asarray(direction, float) / np.linalg.norm(direction)
-    axis = np.cross(d, want)
-    if np.linalg.norm(axis) > 1e-9:
-        rotate_world(frame, nb_limbs, limb, axis, math.degrees(math.acos(np.clip(d @ want, -1, 1))))
-
-
-def turn_between(a, b):
-    """The shortest rotation taking direction `a` to direction `b`."""
-    a, b = a / np.linalg.norm(a), b / np.linalg.norm(b)
-    axis = np.cross(a, b)
-    if np.linalg.norm(axis) < 1e-9:
-        return np.eye(3)
-    return turn_matrix(axis, math.degrees(math.acos(np.clip(a @ b, -1, 1))))
-
-
-def make_run_jump(base, nb_limbs, link_limbs, link_frames, link_stand, hold=None, clearance=None):
-    """Her leap off a ledge, following Link's (`link_frames`; `link_stand`: his standing frame) from `base`; with
-    `hold` (HOLD_* table) her scimitars held as she runs with them, an arm raised out just enough wherever a blade
-    would cut her (`clearance`)."""
-    L = ootanim.LINK_LIMB
-    Wb, Pb = fk(nb_limbs, base)
-    Ws, Ps = fk(link_limbs, link_stand)
-    height = (Pb[0][1] - min(Pb[3][1], Pb[6][1])) / (Ps[0][1] - min(Ps[L["L_FOOT"]][1], Ps[L["R_FOOT"]][1]))
+def make_run_jump(run, nb_limbs, air, hold=None, clearance=None):
+    """Her leap off a ledge from `run` (her run cycle; RUN_JUMP keys), ending near `air`; with `hold` (HOLD_* table) her
+    scimitars held as she runs with them, an arm raised out just enough wherever a blade would cut her (`clearance`)."""
+    mean = mean_frame(run)
     out = []
-    for frame in link_frames:
-        W, P = fk(link_limbs, frame)
-        f = base.copy()
-        f[0, 1] += int((frame[0][1] - link_stand[0][1]) * height)
-        f[1] = zyx_from_rot(W[0] @ Ws[0].T @ Wb[0])  # her pelvis turned as his is
-        Wf, Pf = fk(nb_limbs, f)
-        spine = turn_between(Ps[L["HEAD"]] - Ps[L["UPPER"]], P[L["HEAD"]] - P[L["UPPER"]]) @ (Pb[NB_HEAD] - Pb[NB_TORSO])
-        aim_bone(f, nb_limbs, NB_TORSO, NB_HEAD, spine)
-        steady_limb(f, nb_limbs, NB_HEAD, Wb[NB_HEAD], RUN_JUMP_HEAD_STEADY)
-        for (limb, child), (his, his_child) in RUN_JUMP_BONES:
-            aim_bone(f, nb_limbs, limb, child, P[L[his_child]] - P[L[his]])
+    for at, stride, upright, into_air in RUN_JUMP:
+        i = int(at)
+        f = blend_frames(run[i], run[(i + 1) % len(run)], at - i)
+        for limb in NB_LEGS:  # the stride: her legs further from their average over the cycle
+            m = quat_from_rot(rot_zyx(mean[limb + 1]))
+            q = quat_from_rot(rot_zyx(f[limb + 1]))
+            f[limb + 1] = zyx_from_rot(rot_from_quat(quat_mul(m, quat_pow(quat_mul(quat_conj(m), q), stride))))
+        bend_forward(f, nb_limbs, NB_TORSO, -upright)
         if hold is not None:
             f = hold_blades(f, nb_limbs, hold)
+        f = blend_frames(f, air, into_air)
+        if hold is not None:
             for j, arm in SWORD_ARM.items():
                 if clearance.count(f, only=j):
                     for lift in RUN_JUMP_ARM_LIFT:
@@ -1300,9 +1272,7 @@ def main():
     run = tables["gPlayAsNabooruRunAnim"]
     lean = forward_lean(nb_limbs, run) - forward_lean(nb_limbs, nb_walk.table) + 4.0
     add("RunBack", make_run_back(run, nb_limbs, lean), f"run leaning back {lean:.1f} degrees, for running backwards")
-    link_jump = (ootanim.parse_link_skeleton(), ootanim.parse_link_anim(RUN_JUMP_LINK),
-                 ootanim.parse_link_anim(LINK_STAND)[0])
-    add("RunJump", make_run_jump(relaxed[0], nb_limbs, *link_jump), "leaping off a ledge from a run, as Link does")
+    add("RunJump", make_run_jump(run, nb_limbs, air[0]), "leaping off a ledge: her run's stride carried into the air")
 
     # moving with scimitars out: her own walk/run arm swing (less of it running), wrists turned to keep the blades off
     # her body
@@ -1313,7 +1283,7 @@ def main():
     armed = {"ArmedIdle": armed_idle, "ArmedTired": armed_tired,
              "ArmedWalk": np.array([hold_blades(f, nb_limbs, HOLD_WALK) for f in nb_walk.table]),
              "ArmedRun": np.array([hold_blades(f, nb_limbs, HOLD_RUN) for f in armed_run]),
-             "RunJumpArmed": make_run_jump(relaxed[0], nb_limbs, *link_jump, HOLD_RUN, clearance),  # (then held)
+             "RunJumpArmed": make_run_jump(armed_run, nb_limbs, air[0], HOLD_RUN, clearance),
              "ArmedRunBack": np.array([hold_blades(f, nb_limbs, HOLD_RUN)
                                        for f in make_run_back(armed_run, nb_limbs, lean)])}
     jump = tables["gPlayAsNabooruJumpAnim"]
