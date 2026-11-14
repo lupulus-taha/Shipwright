@@ -145,6 +145,17 @@ const Move kBackflipEnd = { .name = "BackflipEnd",
                             .bareAnim = GEN(FlipBare) }; // empty-handed she stands up relaxed
 // jumping and falling (landings are the end of the fighter's drop-from-the-ceiling animation)
 const Move kAirborne = { "Airborne", GEN(Air), nullptr, Mode::Pose, 0 };       // knees drawn up, arms out
+// Running off a ledge Link leaps (13 frames, the last held while he falls on). Hers (generated, frame by frame with
+// his): a push-off leaning into it, then a split in the air, arms swinging against her legs, gathering towards her
+// pose in the air. It cuts in quickly, the push-off has to show.
+const Move kRunJump = { .name = "RunJump",
+                        .anim = GEN(RunJumpArmed),
+                        .swords = nullptr,
+                        .mode = Mode::Sync,
+                        .start = 0,
+                        .end = 12,
+                        .bareAnim = GEN(RunJump),
+                        .blendIn = 0.5f };
 // Link's side hop leaves the ground at once and is over in 6 frames, under 7 units high, then he slides on a little as
 // he lands. Hers (generated, frame by frame with his hop and his landing) goes in an arc: a crouch, a push-off from
 // her trailing toes, which stay where she took off (kept on the ground, see KeepFeetDown) while her hips go on over;
@@ -310,6 +321,7 @@ const std::vector<Rule> kRules = {
     { { "_hit", "_shit", "damage" }, &kDamage },
     // Link's "normal_landing" is his fall, and also his touchdown after a long drop (see Nabooru_OnPlayerUpdate)
     { { "run_jump_end", "front_jump_end", "anchor_landing" }, &kLandShort },
+    { { "normal_run_jump" }, &kRunJump }, // leaping off a ledge from a run
     { { "landing", "normal_jump", "run_jump", "front_jump" }, &kAirborne },
     { { "talk" }, &kHips },
     { { "wait_heat", "waitF_heat" }, &kTired }, // armed version picked in UpdateBody

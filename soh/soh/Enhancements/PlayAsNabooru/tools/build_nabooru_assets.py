@@ -779,6 +779,78 @@ def make_hurt_landing(rest, nb_limbs, feet, air, arms_cfg, clearance=None, bare=
     return land, np.array(hold), np.array(rise)
 
 
+# Running off a ledge, Link leaps (his run_jump: 13 frames, then he holds the last while he falls): a push-off leaning
+# into it, the push leg stretching back, then a split in the air (left leg reaching forward, right leg trailing, bent),
+# arms swinging against the legs, gathering towards his fall pose at the end. Hers, one key per frame of his. Per key:
+# her hips' height (model units) and the lean of her whole body forward (degrees), each ankle's place relative to its
+# hip joint (forward, up; model units; straight down is (0, -2914)) and its toes-down pitch, for the leading (left) and
+# trailing (right) leg, and how far her arms have swung against her legs (then towards her pose in the air: `air`).
+RUN_JUMP = [
+    dict(hips=-400, lean=20, lead=(700, -1750, 20), trail=(-1500, -2350, 55), arms=0.5, air=0.0),  # push-off
+    dict(hips=-200, lean=15, lead=(850, -1650, 15), trail=(-1800, -2150, 60), arms=0.8, air=0.0),
+    dict(hips=0, lean=9, lead=(1000, -1600, 10), trail=(-2000, -1950, 60), arms=1.0, air=0.0),
+    dict(hips=0, lean=3, lead=(1300, -1750, 5), trail=(-2150, -1600, 55), arms=1.0, air=0.0),
+    dict(hips=0, lean=-2, lead=(1650, -1900, 0), trail=(-2200, -1250, 50), arms=1.0, air=0.0),
+    dict(hips=0, lean=-5, lead=(1900, -1950, -5), trail=(-2200, -1000, 45), arms=1.0, air=0.0),  # the split
+    dict(hips=0, lean=-6, lead=(2000, -1900, -10), trail=(-2150, -900, 45), arms=1.0, air=0.0),
+    dict(hips=0, lean=-6, lead=(1950, -1950, -10), trail=(-2050, -950, 45), arms=1.0, air=0.0),
+    dict(hips=0, lean=-5, lead=(1800, -2000, -5), trail=(-1850, -1100, 40), arms=0.95, air=0.0),
+    dict(hips=0, lean=-3, lead=(1550, -2050, 0), trail=(-1550, -1300, 35), arms=0.8, air=0.15),
+    dict(hips=0, lean=0, lead=(1200, -2100, 5), trail=(-1150, -1500, 30), arms=0.6, air=0.35),
+    dict(hips=0, lean=3, lead=(850, -2100, 10), trail=(-750, -1650, 25), arms=0.4, air=0.6),
+    dict(hips=0, lean=5, lead=(550, -2100, 10), trail=(-400, -1750, 20), arms=0.2, air=0.85),  # gathering to fall
+]
+# Arms against the legs (directions from shoulder to hand in model space, elbow bend): the left (on the side of the
+# leg reaching forward) swung back, the right forward and up.
+RUN_JUMP_ARMS = {NB_L_ARM: ((0.25, -0.55, -0.8), 25), NB_R_ARM: ((-0.2, -0.25, 0.95), 45)}
+RUN_JUMP_HEAD_STEADY = 0.6
+RUN_JUMP_ARM_LIFT = range(5, 65, 5)  # degrees an arm may be raised out to the side to keep its scimitar off her
+
+
+def reach_foot(frame, nb_limbs, leg, ankle, toes, flat):
+    """The leg reaching its ankle to `ankle` (model space), the foot `flat` (model space) pitched `toes` down."""
+    f = frame.copy()
+    W, _ = fk(nb_limbs, f)
+    toe = flat @ np.array([1.0, 0.0, 0.0])
+    side = np.cross(np.array([0.0, 1.0, 0.0]), toe)
+    f[leg[2] + 1] = zyx_from_rot(W[leg[1]].T @ turn_matrix(side, toes) @ flat)
+    return solve_leg(f, nb_limbs, leg, ankle)
+
+
+def make_run_jump(base, nb_limbs, air, hold=None, clearance=None):
+    """Her leap off a ledge from a run (RUN_JUMP keys), arms from `base`'s; with `hold` (HOLD_* table) her scimitars
+    held as she runs with them, an arm raised out just enough wherever a blade would cut her (`clearance`)."""
+    Wb, _ = fk(nb_limbs, base)
+    out = []
+    for key in RUN_JUMP:
+        f = base.copy()
+        f[0, 1] += key["hips"]
+        rotate_world(f, nb_limbs, 0, X_AXIS, key["lean"])  # (+X tips her forward)
+        steady_limb(f, nb_limbs, NB_HEAD, Wb[NB_HEAD], RUN_JUMP_HEAD_STEADY)
+        swung = f.copy()
+        for arm, (direction, elbow) in RUN_JUMP_ARMS.items():
+            swung = aim_arm(swung, nb_limbs, arm, direction)
+            rotate_world(swung, nb_limbs, arm[1], X_AXIS, -elbow)
+        posed = blend_frames(blend_frames(f, swung, key["arms"]), air, key["air"])
+        for limb in NB_L_ARM + NB_R_ARM:
+            f[limb + 1] = posed[limb + 1]
+        for leg, (forward, up, toes) in ((NB_L_LEG, key["lead"]), (NB_R_LEG, key["trail"])):
+            _, P = fk(nb_limbs, f)
+            f = reach_foot(f, nb_limbs, leg, P[leg[0]] + [0, up, forward], toes, Wb[leg[2]])
+        if hold is not None:
+            f = hold_blades(f, nb_limbs, hold)
+            for j, arm in SWORD_ARM.items():
+                if clearance.count(f, only=j):
+                    for lift in RUN_JUMP_ARM_LIFT:
+                        raised = f.copy()
+                        rotate_world(raised, nb_limbs, arm[0], Z_AXIS, (1 if j == 1 else -1) * lift)
+                        if not clearance.count(raised, only=j):
+                            break
+                    f = raised
+        out.append(f)
+    return np.array(out)
+
+
 ARMED_RUN_SWING = 0.45  # with scimitars in hand her arms swing this much of her run's swing (about her walk's)
 
 
@@ -1231,6 +1303,7 @@ def main():
     run = tables["gPlayAsNabooruRunAnim"]
     lean = forward_lean(nb_limbs, run) - forward_lean(nb_limbs, nb_walk.table) + 4.0
     add("RunBack", make_run_back(run, nb_limbs, lean), f"run leaning back {lean:.1f} degrees, for running backwards")
+    add("RunJump", make_run_jump(relaxed[0], nb_limbs, air[0]), "leaping off a ledge from a run: legs split, arms swinging")
 
     # moving with scimitars out: her own walk/run arm swing (less of it running), wrists turned to keep the blades off
     # her body
@@ -1241,6 +1314,7 @@ def main():
     armed = {"ArmedIdle": armed_idle, "ArmedTired": armed_tired,
              "ArmedWalk": np.array([hold_blades(f, nb_limbs, HOLD_WALK) for f in nb_walk.table]),
              "ArmedRun": np.array([hold_blades(f, nb_limbs, HOLD_RUN) for f in armed_run]),
+             "RunJumpArmed": make_run_jump(relaxed[0], nb_limbs, air[0], HOLD_RUN, clearance),  # (bare arms, then held)
              "ArmedRunBack": np.array([hold_blades(f, nb_limbs, HOLD_RUN)
                                        for f in make_run_back(armed_run, nb_limbs, lean)])}
     jump = tables["gPlayAsNabooruJumpAnim"]
