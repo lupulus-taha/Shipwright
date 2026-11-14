@@ -34,6 +34,7 @@ extern "C" {
 #include "objects/object_nb/object_nb.h"
 #include "objects/object_geldb/object_geldb.h"
 #include "overlays/actors/ovl_En_Nb/z_en_nb.h"
+#include "overlays/actors/ovl_En_M_Thunder/z_en_m_thunder.h"
 extern PlayState* gPlayState;
 void ResourceMgr_UnregisterSkeleton(SkelAnime* skelAnime);
 }
@@ -1248,11 +1249,14 @@ const char* ItemName(u32 item) {
     return (name != nullptr && HasResource(name)) ? name : nullptr;
 }
 
+void ChargeAlongScimitars();
+
 void Nabooru_OnPlayerDraw(bool isFirstPerson) {
     if (isFirstPerson || !sBody.ready || gPlayState == nullptr) {
         return;
     }
     ::PlayAsNabooru_DrawModel();
+    ChargeAlongScimitars();
 }
 
 void RegisterPlayAsNabooru() {
@@ -1336,6 +1340,61 @@ bool GetSwordRotation(bool leftHand, Vec3s* rot) {
     return SampleJointRotation(kDefaultSwords, 0, joint, rot);
 }
 
+// Charging a spin attack, Link's sword glows (En_M_Thunder) and sparkles converge on it (Eff_Dust); both are drawn in
+// his sword hand's matrix (Player::mf_9E0), where his blade runs along +X from (0, 400, 0). Hers: from the hilt at
+// kBladeHilt of the scimitar limb, curving away along -Y; the glow follows the chord through the middle of the blade,
+// scaled from the length of Link's sword to hers.
+constexpr Vec3f kBladeHilt = { 480.0f, -250.0f, 0.0f };
+constexpr f32 kBladeAngle = -1.847f; // radians about Z from +X to the chord
+constexpr f32 kBladeLength = 3300.0f;
+constexpr f32 kLinkBladeY = 400.0f;
+constexpr f32 kLinkBladeLengths[] = { 4000.0f, 3000.0f, 5500.0f }; // by En_M_Thunder's sword type: Master, Kokiri, BGS
+MtxF sBladeMtx[2]; // her scimitars (left, right hand) at the hilt, along the chord: recorded as she is drawn
+bool sBladeDrawn[2];
+
+EnMThunder* FindSpinCharge() {
+    for (Actor* actor = gPlayState->actorCtx.actorLists[ACTORCAT_ITEMACTION].head; actor != nullptr;
+         actor = actor->next) {
+        if (actor->id == ACTOR_EN_M_THUNDER && actor->update != nullptr) {
+            return (EnMThunder*)actor;
+        }
+    }
+    return nullptr;
+}
+
+// Moves Link's sword hand matrix onto her left scimitar while a spin attack is charged or released (the glow and the
+// sparkles, drawn after her, follow it), and draws a second glow along her right one.
+void ChargeAlongScimitars() {
+    Player* player = GET_PLAYER(gPlayState);
+    EnMThunder* charge = FindSpinCharge();
+    if (!sShowSwords || charge == nullptr || !sBladeDrawn[0] || !sBladeDrawn[1]) {
+        return;
+    }
+    f32 scale = kBladeLength / kLinkBladeLengths[MIN(charge->swordType, ARRAY_COUNT(kLinkBladeLengths) - 1)];
+    MtxF blades[2];
+    for (s32 i = 0; i < 2; i++) {
+        Matrix_Push();
+        Matrix_Put(&sBladeMtx[i]);
+        Matrix_Scale(scale, scale, scale, MTXMODE_APPLY);
+        Matrix_Translate(0.0f, -kLinkBladeY, 0.0f, MTXMODE_APPLY);
+        Matrix_Get(&blades[i]);
+        Matrix_Pop();
+    }
+    if (charge->actor.draw != nullptr && charge->chargeAlpha > 0) {
+        // (with an attack strength it doesn't have, it draws the glow without the spin's trail)
+        u8 strength = charge->attackStrength;
+        charge->attackStrength = 2;
+        player->mf_9E0 = blades[1];
+        Matrix_Push();
+        FrameInterpolation_RecordOpenChild(&sBladeMtx[1], 0);
+        charge->actor.draw(&charge->actor, gPlayState);
+        FrameInterpolation_RecordCloseChild();
+        Matrix_Pop();
+        charge->attackStrength = strength;
+    }
+    player->mf_9E0 = blades[0];
+}
+
 } // namespace
 
 // For tools: the test harness logs her current move and frame.
@@ -1404,6 +1463,12 @@ static void PlayAsNabooru_DrawSword(PlayState* play, bool leftHand) {
     OPEN_DISPS(play->state.gfxCtx);
     Matrix_Push();
     Matrix_RotateZYX(rot.x, rot.y, rot.z, MTXMODE_APPLY);
+    Matrix_Push(); // where a spin attack's charge goes
+    Matrix_Translate(kBladeHilt.x, kBladeHilt.y, kBladeHilt.z, MTXMODE_APPLY);
+    Matrix_RotateZ(kBladeAngle, MTXMODE_APPLY);
+    Matrix_Get(&sBladeMtx[leftHand ? 0 : 1]);
+    sBladeDrawn[leftHand ? 0 : 1] = true;
+    Matrix_Pop();
     gSPMatrix(POLY_OPA_DISP++, MATRIX_NEWMTX(play->state.gfxCtx), G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_MODELVIEW);
     gSPDisplayList(POLY_OPA_DISP++, (Gfx*)(leftHand ? gGerudoRedSkelLimbsLimb_00A39CDL_009460
                                                     : gGerudoRedSkelLimbsLimb_00A360DL_0097D0));
@@ -1432,6 +1497,7 @@ static void PlayAsNabooru_DrawModel() {
     gSPSegment(POLY_OPA_DISP++, 0x09, (uintptr_t)sEyeTextures[sEyeIndex]);
     gDPSetEnvColor(POLY_OPA_DISP++, 0, 0, 0, 255);
     gSPSegment(POLY_OPA_DISP++, 0x0C, (uintptr_t)&D_80116280[2]);
+    sBladeDrawn[0] = sBladeDrawn[1] = false;
     // The player actor's model matrix (position, facing, 0.01 scale) is still current here.
     SkelAnime_DrawFlexOpa(gPlayState, sBody.skel.skeleton, sFinalJoints, sBody.skel.dListCount, NULL,
                           PlayAsNabooru_PostLimbDraw, &player->actor);
