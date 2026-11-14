@@ -25,8 +25,8 @@
 //   face DEG                  turn the player DEG away from facing the camera (0 = facing it, 90 = her left side)
 //   pos X Y Z                 teleport the player
 //   save | restore            remember the player's position and facing | go back there
-//   rise DY                   move the player up by DY (she falls back down)
-//   cvar NAME VALUE           set an integer CVar (not saved)
+//   rise DY                   move the player up by DY (she falls back down; from 400 up the fall hurts)
+//   cvar NAME VALUE           set an integer CVar (not saved) and run what listens to it, as the menu does
 //   honoured 0|1              whether Nabooru is honoured by jackals (the save file's flag)
 //   savecheck                 write the game into save slot 1 and load it back, logging the mod's save flags
 //   warp HEX                  go to entrance HEX (follow with waitplay)
@@ -521,10 +521,13 @@ void OnFrameStart() {
                 if (player) {
                     player->actor.world.pos.y += step.values[0];
                     player->actor.prevPos.y = player->actor.world.pos.y;
+                    // a real fall from up there (long ones hurt)
+                    player->fallStartHeight = (s16)player->actor.world.pos.y;
                 }
                 break;
             case Kind::CVar:
                 CVarSetInteger(step.text.c_str(), (s32)step.values[0]);
+                ShipInit::Init(step.text); // as the menu does (e.g. switching Nabooru off shows Link, for reference)
                 break;
             case Kind::Honoured:
                 PlayAsNabooru_SetHonouredByJackals(step.values[0] != 0.0f);
