@@ -495,12 +495,15 @@ class FootBoxes:
         return float((P[foot] + (W[foot] @ self.corners[foot].T).T)[:, 1].min())
 
 
-def place_foot(frame, nb_limbs, feet, leg, ankle, height, toes):
+def place_foot(frame, nb_limbs, feet, leg, ankle, height, toes, flat=None):
     """The leg reaching for `ankle` (model space; its height is then adjusted) with the foot pitched `toes` degrees
-    toes-down, its lowest point at model height `height`."""
+    toes-down (from `flat`, its orientation in model space, if given), its lowest point at model height `height`."""
     thigh, shin, foot = leg
     f = frame.copy()
     W, _ = fk(nb_limbs, f)
+    if flat is not None:
+        f[foot + 1] = zyx_from_rot(W[shin].T @ flat)
+        W, _ = fk(nb_limbs, f)
     toe = W[foot] @ np.array([1.0, 0.0, 0.0])  # the foot points along its +X
     side = np.cross(np.array([0.0, 1.0, 0.0]), toe)  # pitching about this turns the toes down
     f[foot + 1] = zyx_from_rot(W[shin].T @ rot_from_quat(np.concatenate(
@@ -560,6 +563,117 @@ def make_side_hop(base, nb_limbs, feet, right, air=None):
             f = place_foot(f, nb_limbs, feet, leg, standing[leg[2]] + [side * dx, 0, 0], height, toes)
         out.append(f)
     return np.array(out)
+
+
+def aim_arm(frame, nb_limbs, arm, direction):
+    """The arm turned at the shoulder (as a whole) so that shoulder-to-hand points along `direction` (model space)."""
+    _, P = fk(nb_limbs, frame)
+    d = (P[arm[2]] - P[arm[0]]) / np.linalg.norm(P[arm[2]] - P[arm[0]])
+    want = np.asarray(direction, float) / np.linalg.norm(direction)
+    axis = np.cross(d, want)
+    out = frame.copy()
+    if np.linalg.norm(axis) > 1e-9:
+        rotate_world(out, nb_limbs, arm[0], axis, math.degrees(math.acos(np.clip(d @ want, -1, 1))))
+    return out
+
+
+# Landing hurt after a long fall (Link crouches, holds it shaking, then gets up): a hard landing into a deep squat,
+# folded over her knees, head down, arms hanging; breathing hard while Link holds; standing up into her idle. Keys
+# per frame of the landing: her hips' height and how far back they go (model units, from where they are standing),
+# pelvis pitch and torso bend forward, head bend (degrees), and how far her arms have come from her pose in the air
+# to hanging.
+HURT_LAND = [
+    dict(hips=-700, back=-100, pitch=5, bend=8, head=0, arms=0.0),  # touching down
+    dict(hips=-1550, back=-250, pitch=14, bend=30, head=8, arms=0.4),
+    dict(hips=-2000, back=-350, pitch=20, bend=48, head=18, arms=0.8),
+    dict(hips=-2080, back=-380, pitch=22, bend=57, head=26, arms=1.0),  # the impact carries her a little further
+    dict(hips=-2010, back=-360, pitch=21, bend=54, head=24, arms=1.0),
+    dict(hips=-1980, back=-350, pitch=20, bend=53, head=22, arms=1.0),
+    dict(hips=-1980, back=-350, pitch=20, bend=53, head=22, arms=1.0),
+    dict(hips=-1980, back=-350, pitch=20, bend=53, head=22, arms=1.0),
+]
+HURT_HOLD_FRAMES = 16  # a breath: hips, torso and head heave by these (model units, degrees)
+HURT_BREATH = dict(hips=40, bend=3.0, head=2.0)
+HURT_RISE_FRAMES = 10
+# Hanging arms: shoulder-to-hand direction (left arm; mirrored for the right), elbow bend; with scimitars also the
+# forearm roll and wrist (as in HOLD_*): a little further out and forward, the blades held level, pointing ahead
+# (found by searching for blades clear of her and of the ground).
+HURT_ARMS = dict(hang=(0.2, -1.0, 0.3), elbow=20)
+HURT_ARMS_ARMED = dict(hang=(0.6, -1.0, 0.6), elbow=40, twist=-45, wrist=(30, -30, 60))
+BLADE_GROUND_CLEARANCE = 100  # model units
+
+
+def hurt_pose(rest, nb_limbs, feet, key, air, arms_cfg, arms=1.0, rest_arms=0.0, bare=None):
+    """`rest` crouched as `key` says, feet where they stand. Arms: `arms` of the way from `air`'s to hanging (posed
+    from `bare`'s arms if given: `rest` may have turned its wrists already), then `rest_arms` of the way to `rest`'s."""
+    f = rest.copy()
+    f[0, 1] += key["hips"]
+    f[0, 2] += key["back"]
+    rotate_world(f, nb_limbs, 0, X_AXIS, key["pitch"])
+    bend_forward(f, nb_limbs, NB_TORSO, key["bend"])
+    bend_forward(f, nb_limbs, NB_HEAD, key["head"])
+    hang = f.copy()
+    if bare is not None:
+        for limb in NB_L_ARM + NB_R_ARM:
+            hang[limb + 1] = bare[limb + 1]
+    for arm, side in ((NB_L_ARM, 1), (NB_R_ARM, -1)):
+        x, y, z = arms_cfg["hang"]
+        hang = aim_arm(hang, nb_limbs, arm, (side * x, y, z))
+        rotate_world(hang, nb_limbs, arm[1], X_AXIS, -arms_cfg["elbow"])
+        if "wrist" in arms_cfg:
+            wrist = arms_cfg["wrist"] if side == 1 else (-arms_cfg["wrist"][0], -arms_cfg["wrist"][1], arms_cfg["wrist"][2])
+            hang[arm[1] + 1] = zyx_from_rot(rot_zyx(hang[arm[1] + 1]) @ rot_zyx((int(side * arms_cfg["twist"] * 182), 0, 0)))
+            hang[arm[2] + 1] = zyx_from_rot(rot_zyx(hang[arm[2] + 1]) @ rot_zyx(tuple(int(v * 182) for v in wrist)))
+    in_air = f.copy()
+    for limb in NB_L_ARM + NB_R_ARM:
+        in_air[limb + 1] = air[limb + 1]
+    posed = blend_frames(blend_frames(in_air, hang, arms), rest, rest_arms)
+    for limb in NB_L_ARM + NB_R_ARM:
+        f[limb + 1] = posed[limb + 1]
+    W, P = fk(nb_limbs, rest)
+    for leg in (NB_L_LEG, NB_R_LEG):
+        f = place_foot(f, nb_limbs, feet, leg, P[leg[2]], feet.lowest(rest, leg[2]), 0, flat=W[leg[2]])
+    return f
+
+
+def blades_clear(frame, nb_limbs, clearance):
+    """Her scimitars (in her grip) are out of her body and above the ground."""
+    if clearance.count(frame):
+        return False
+    W, P = fk(nb_limbs, frame)
+    return all((P[hand] + (W[hand] @ clearance.blades[j].T).T)[:, 1].min() >= BLADE_GROUND_CLEARANCE
+               for j, hand in SWORD_HAND.items())
+
+
+def make_hurt_landing(rest, nb_limbs, feet, air, arms_cfg, clearance=None, bare=None):
+    """-> landing (one frame per frame of Link's crouch), holding (a loop), getting up (ends in `rest`). With
+    `clearance` (scimitars in hand), a frame where the blades would cut her or the ground moves her arms a little
+    less or further along, whichever is nearest and clear. `bare`: her idle with empty hands, if `rest` isn't."""
+
+    def pose(key, arms, rest_arms, search):
+        tries = [search] + sorted(np.arange(0.0, 1.0001, 0.05), key=lambda w: abs(w - search))
+        for w in tries:
+            f = hurt_pose(rest, nb_limbs, feet, key, air, arms_cfg, *((w, rest_arms) if arms is None else (arms, w)),
+                          bare=bare)
+            if clearance is None or blades_clear(f, nb_limbs, clearance):
+                return f
+        sys.exit("HurtLand: no clear place for her scimitars")
+
+    land = np.array([pose(key, None, 0.0, key["arms"]) for key in HURT_LAND])
+    squat = HURT_LAND[-1]
+    hold = []
+    for i in range(HURT_HOLD_FRAMES):
+        breath = math.sin(2 * math.pi * i / HURT_HOLD_FRAMES)
+        key = dict(squat, hips=squat["hips"] + HURT_BREATH["hips"] * breath,
+                   bend=squat["bend"] + HURT_BREATH["bend"] * breath,
+                   head=squat["head"] + HURT_BREATH["head"] * math.sin(2 * math.pi * i / HURT_HOLD_FRAMES + 0.6))
+        hold.append(pose(key, 1.0, 0.0, 0.0))
+    rise = []
+    for i in range(HURT_RISE_FRAMES - 1):
+        w = smoothstep(i / (HURT_RISE_FRAMES - 1))
+        rise.append(pose({k: v * (1 - w) for k, v in squat.items()}, 1.0, None, w))
+    rise.append(rest.copy())
+    return land, np.array(hold), np.array(rise)
 
 
 ARMED_RUN_SWING = 0.45  # with scimitars in hand her arms swing this much of her run's swing (about her walk's)
@@ -1046,6 +1160,14 @@ def main():
         if clipping:
             sys.exit(f"SideHopArmed{suffix}: scimitars cut through her body ({clipping} points)")
         add(f"SideHopArmed{suffix}", hop, "the same from her fighting stance, blades clear of her body", hop_swords)
+    # landing hurt after a long fall: crouching hard, holding it, getting up
+    for suffix, rest_pose, arms_cfg, blades in (("", relaxed[0], HURT_ARMS, None),
+                                                ("Armed", armed_idle[0], HURT_ARMS_ARMED, clearance)):
+        land, hold, rise = make_hurt_landing(rest_pose, nb_limbs, feet, air[0], arms_cfg, blades, relaxed[0])
+        note = ", blades clear of her and the ground" if blades else ""
+        add(f"HurtLand{suffix}", land, "hurt by a fall: landing in a deep squat" + note)
+        add(f"HurtHold{suffix}", hold, "hurt by a fall: breathing hard in the squat" + note)
+        add(f"HurtRise{suffix}", rise, "hurt by a fall: getting up" + note)
     reflections = choose_reflections(nb_limbs, nb_walk.table)
     add("FlipBare", make_bare_flip(tables["gPlayAsNabooruFlipAnim"], soft[5], relaxed[0], nb_limbs, reflections),
         "backflip landing relaxed, for empty hands")

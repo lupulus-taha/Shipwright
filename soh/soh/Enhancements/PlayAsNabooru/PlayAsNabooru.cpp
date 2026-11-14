@@ -176,6 +176,27 @@ const Move kLandShort = { .name = "LandShort",
                           .bareAnim = GEN(LandLow) };
 // the same while Z-targeting with scimitars (side hops): settling into her fighting stance, which follows
 const Move kLandShortStance = { "LandShortStance", GEN(LandLowStance), nullptr, Mode::Sync, 1, 16 };
+// Hurt by a long fall, Link crouches (his landing up to frame 8), holds it shaking while he is stunned, then plays the
+// rest to get up. Hers (generated): a hard landing into a deep squat, folded over her knees, head down, arms hanging;
+// breathing hard (and shaking as he does); standing up into her idle.
+constexpr f32 kHurtCrouchFrame = 8.0f;
+const Move kHurtLand = { .name = "HurtLand",
+                         .anim = GEN(HurtLandArmed),
+                         .swords = nullptr,
+                         .mode = Mode::Sync,
+                         .start = 0,
+                         .end = 7,
+                         .bareAnim = GEN(HurtLand),
+                         .blendIn = 0.5f }; // the impact can't wait
+const Move kHurtHold = { .name = "HurtHold", .anim = GEN(HurtHoldArmed), .mode = Mode::Loop, .bareAnim = GEN(HurtHold) };
+const Move kHurtRise = { .name = "HurtRise",
+                         .anim = GEN(HurtRiseArmed),
+                         .swords = nullptr,
+                         .mode = Mode::Sync,
+                         .start = 0,
+                         .end = 9,
+                         .bareAnim = GEN(HurtRise),
+                         .linkFrom = kHurtCrouchFrame };
 // after a long drop, moving on (Link rolls): a quick dip, then her walk/run takes over
 const Move kLandQuick = { "LandQuick", GEN(Jump), GEN_SWORDS(Jump), Mode::Once, 4, 14, 2.0f };
 constexpr s32 kLandQuickFrames = 5;
@@ -369,6 +390,7 @@ s32 sKeepFolded = 0;    // remaining frames her arms stay folded as she starts w
 bool sWasShielding = false;
 bool sInAir = false;
 f32 sAirPeakY = 0.0f;    // highest point since leaving the ground
+bool sHurtLanding = false; // landing from a fall that hurt
 const Move* sHop = nullptr; // the side hop under way, and the height she took off from
 f32 sHopFloorY = 0.0f;
 std::string sForcedName; // test harness: show one animation frame instead of mirroring Link
@@ -930,6 +952,17 @@ void Nabooru_OnPlayerUpdate() {
     } else if (body == &kAirborne && grounded && IsLinkTouchdown(link->animation)) {
         body = &kLand; // Link's fall animation played on the ground is his landing after a long drop
     }
+    // A fall that hurt: Link stops his landing at its crouch while he shakes, then plays the rest to get up.
+    if (body == &kLand && HasResource(kHurtLand.anim)) {
+        sHurtLanding |= link->endFrame <= kHurtCrouchFrame;
+        if (sHurtLanding) {
+            body = (link->endFrame > kHurtCrouchFrame)   ? &kHurtRise
+                   : (link->curFrame < kHurtCrouchFrame) ? &kHurtLand
+                                                         : &kHurtHold;
+        }
+    } else {
+        sHurtLanding = false;
+    }
     if (body == &kTired && sShowSwords) {
         body = &kTiredSwords;
     }
@@ -1071,6 +1104,10 @@ void Nabooru_OnPlayerUpdate() {
     Math_StepToF(&sStraighten, straighten, kStraightenStep);
     BlendLayers();
     KeepFeetDown(player);
+    if (sBody.move == &kHurtHold) {
+        // shaking as Link does (his model is moved up and down 40 units every other frame)
+        sFinalJoints[0].y += (player->av2.fallDamageStunTimer & 1) ? 40 : -40;
+    }
 }
 
 // ------------------------------------------------------------------------------------------------ voice
