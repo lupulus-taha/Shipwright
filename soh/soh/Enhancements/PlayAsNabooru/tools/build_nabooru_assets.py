@@ -1077,6 +1077,190 @@ def make_bonk(defeat, kneel, rest, defeat_swords=None, clearance=None):
     return np.array(out) if swords is None else (np.array(out), np.array(swords))
 
 
+class BodyPoints:
+    """Her mesh's vertices, limb by limb (not her ponytail), to put her body on the ground: its lowest point."""
+
+    def __init__(self, nb_limbs):
+        self.limbs = nb_limbs
+        self.points = {}
+        for i, limb in enumerate(nb_limbs):
+            path = ootanim.ASSETS / "object_nb" / f"{limb.name[: -len('Limb')]}Vtx.inc.c"
+            if path.exists() and i != NB_PONYTAIL:
+                self.points[i] = read_vtx("object_nb", path.name[: -len(".inc.c")])
+
+    def lowest(self, frame):
+        W, P = fk(self.limbs, frame)
+        return min(float((P[i] + (W[i] @ v.T).T)[:, 1].min()) for i, v in self.points.items())
+
+
+NB_PONYTAIL = 16
+
+# Knocked down from behind, Link pitches forward onto his front (back_downA: 6 frames, sliding on), lies a moment
+# (back_downB) and gets up (back_down_wake: 36 frames). Hers lands on her left shoulder and side rather than on all
+# fours: the hit thrusts her hips forward and whips her upper body back, then she pitches forward, rolling onto her
+# left side, her left arm reaching out ahead to take the fall; she lies curled on her left side, then pushes herself up
+# on her right hand and left forearm, gets her knees under her and rises through the guard's kneel (the get-up she
+# has for falling on her back).
+# Her pose lying on her left side, built standing (then laid down): hips and knees bent (the top leg more), back
+# curled a little, head tilted down to the ground, the bottom (left) arm reaching out past her head, the top (right)
+# arm's hand on the ground in front of her chest. Directions are shoulder to hand in her standing frame; angles are
+# degrees.
+KNOCK_LYING = dict(hips=(50, 75), knees=(70, 95), curl=12, head_tilt=-20, head_bend=10,
+                   left_arm=((0.15, 0.95, 0.25), 25), right_arm=((0.55, 0.1, 0.8), 60))
+# The hit: hips thrust forward (model units), upper body and head whipped back, arms flung back, knees giving a little.
+KNOCK_HIT = dict(hips_forward=250, arch=12, head_back=10, arms=((0.25, -0.8, -0.5), 15), knees=15)
+# Falling, her arms reach forward to take the fall (left, right: direction, elbow) on their way from the hit's to lying.
+KNOCK_REACH = (((0.2, -0.35, 0.9), 15), ((-0.25, -0.5, 0.8), 30))
+# Per key: how far she has pitched forward (degrees; 90 is lying), rolled onto her left side (degrees, -90 is fully on
+# it), gone from the hit's pose to lying (limbs), how far forward her hips are (model units), how high off the ground
+# she is (model units; a little bounce). Fall (Link's 6 frames), then lying (8 keys over his 14 frames).
+KNOCK_FALL = [(0, 0, 0.0, 250, 0), (20, -5, 0.25, 350, 0), (45, -20, 0.5, 450, 0), (68, -45, 0.75, 550, 0),
+              (86, -65, 0.95, 600, 0), (90, -70, 1.0, 600, 0)]
+KNOCK_DOWN = [(90, -70, 1.0, 600, 0), (90, -70, 1.0, 600, 90), (90, -70, 1.0, 600, 40), (90, -70, 1.0, 600, 0),
+              (90, -70, 1.0, 600, 0), (90, -70, 1.0, 600, 0), (90, -70, 1.0, 600, 0), (90, -70, 1.0, 600, 0)]
+# Getting up (Link's 36 frames): poses at some of his frames, in between blended; from KNOCK_KNEEL_AT on, the guard's
+# kneel played backwards (its 10 frames over the rest of his).
+KNOCK_PROPPED = dict(pitch=55, roll=-55, forward=600, hips=(70, 85), knees=(100, 110), curl=8,
+                     left_arm=((0.5, -0.5, 0.7), 90), right_arm=((0.6, -0.6, 0.5), 30))
+KNOCK_KNEES_UNDER = dict(pitch=35, roll=-10, forward=400, hips=(95, 100), knees=(125, 130), curl=10,
+                         left_arm=((0.2, -0.9, 0.35), 20), right_arm=((-0.05, -0.75, 0.65), 20))
+KNOCK_WAKE = [(0, "lying"), (5, "lying"), (11, "propped"), (17, "knees_under"), (22, "kneel")]
+KNOCK_KNEEL_AT = 22
+
+
+def curl_pose(rest, nb_limbs, hips, knees, curl, left_arm, right_arm, head_tilt=0, head_bend=0):
+    """`rest` with hips and knees bent (left, right), back curled, head tilted (to her left) and bent, arms aimed."""
+    f = rest.copy()
+    for (thigh, shin), hip, knee in zip(((1, 2), (4, 5)), hips, knees):
+        rotate_world(f, nb_limbs, thigh, X_AXIS, -hip)
+        rotate_world(f, nb_limbs, shin, X_AXIS, knee)
+    bend_forward(f, nb_limbs, NB_TORSO, curl)
+    rotate_world(f, nb_limbs, NB_HEAD, Z_AXIS, head_tilt)
+    bend_forward(f, nb_limbs, NB_HEAD, head_bend)
+    for arm, (direction, elbow) in ((NB_L_ARM, left_arm), (NB_R_ARM, right_arm)):
+        f = aim_arm(f, nb_limbs, arm, direction)
+        rotate_world(f, nb_limbs, arm[1], X_AXIS, -elbow)
+    return f
+
+
+def laid(pose, nb_limbs, body, rest_root, pitch, roll, forward, lift):
+    """`pose` pitched forward and rolled onto her left side, `forward` model units ahead, resting on the ground (or
+    `lift` above it)."""
+    f = pose.copy()
+    f[1] = zyx_from_rot(turn_matrix(Z_AXIS, roll) @ turn_matrix(X_AXIS, pitch) @ rest_root)
+    f[0, 2] = forward
+    f[0, 1] = 0
+    f[0, 1] = int(-body.lowest(f) + lift)
+    return f
+
+
+def make_knock_front(rest, kneel, nb_limbs, body):
+    """Knocked down from behind -> fall + lying + getting up, one table (KNOCK_FALL, KNOCK_DOWN, then Link's 36 frames
+    of getting up); `kneel`: the guard's kneel (11 frames, standing to kneeling) with her arms as wanted."""
+    rest_root = fk(nb_limbs, rest)[0][0]
+    lying = curl_pose(rest, nb_limbs, **{k: v for k, v in KNOCK_LYING.items()})
+    hit = rest.copy()
+    bend_forward(hit, nb_limbs, NB_TORSO, -KNOCK_HIT["arch"])
+    bend_forward(hit, nb_limbs, NB_HEAD, -KNOCK_HIT["head_back"])
+    for arm, side in ((NB_L_ARM, 1), (NB_R_ARM, -1)):
+        (x, y, z), elbow = KNOCK_HIT["arms"]
+        hit = aim_arm(hit, nb_limbs, arm, (side * x, y, z))
+        rotate_world(hit, nb_limbs, arm[1], X_AXIS, -elbow)
+    for thigh, shin in ((1, 2), (4, 5)):
+        rotate_world(hit, nb_limbs, thigh, X_AXIS, -KNOCK_HIT["knees"])
+        rotate_world(hit, nb_limbs, shin, X_AXIS, 2 * KNOCK_HIT["knees"])
+    reach = hit.copy()
+    for arm, (direction, elbow) in zip((NB_L_ARM, NB_R_ARM), KNOCK_REACH):
+        reach = aim_arm(reach, nb_limbs, arm, direction)
+        rotate_world(reach, nb_limbs, arm[1], X_AXIS, -elbow)
+    out = []
+    for pitch, roll, to_lying, forward, lift in KNOCK_FALL + KNOCK_DOWN:
+        pose = blend_frames(hit, lying, to_lying)
+        arms = (blend_frames(hit, reach, to_lying * 2) if to_lying < 0.5 else
+                blend_frames(reach, lying, to_lying * 2 - 1))
+        for limb in NB_L_ARM + NB_R_ARM:
+            pose[limb + 1] = arms[limb + 1]
+        out.append(laid(pose, nb_limbs, body, rest_root, pitch, roll, forward, lift))
+    poses = {"lying": out[-1]}
+    for name, cfg in (("propped", KNOCK_PROPPED), ("knees_under", KNOCK_KNEES_UNDER)):
+        c = dict(cfg)
+        pitch, roll, forward = c.pop("pitch"), c.pop("roll"), c.pop("forward")
+        poses[name] = laid(curl_pose(rest, nb_limbs, **c), nb_limbs, body, rest_root, pitch, roll, forward, 0)
+    poses["kneel"] = kneel[-1]
+    wake = []
+    for (a, pa), (b, pb) in zip(KNOCK_WAKE, KNOCK_WAKE[1:]):
+        for t in range(a, b):
+            f = blend_frames(poses[pa], poses[pb], smoothstep((t - a) / (b - a)))
+            f[0, 1] = 0
+            f[0, 1] = int(-body.lowest(f))
+            wake.append(f)
+    rise = len(kneel) - 1
+    for t in range(KNOCK_KNEEL_AT, 36):
+        k = (t - KNOCK_KNEEL_AT) / (35 - KNOCK_KNEEL_AT) * rise
+        i = int(k)
+        wake.append(blend_frames(kneel[rise - i], kneel[max(rise - i - 1, 0)], k - i))
+    return np.concatenate([np.array(out), np.array(wake)])
+
+
+# With scimitars in hand while she falls, lies and gets up, a blade that would cut her or go into the ground has her
+# wrist turned (by up to 90 degrees about two axes), and if that isn't enough her arm raised out to the side (degrees);
+# chosen over the whole animation so that her wrists change as little as possible from frame to frame.
+BLADE_WRIST_TURNS = [(a, b) for a in range(-90, 91, 15) for b in range(-90, 91, 15)]
+BLADE_ARM_LIFTS = range(0, 61, 15)
+BLADE_GROUND = -50  # model units: a blade may lie on the ground, not go into it
+
+
+def keep_blades_clear(frames, nb_limbs, clearance):
+    """`frames` with each wrist turned, and if need be the arm raised, wherever its scimitar (in her grip) would cut her
+    or go into the ground: of the turns that keep it clear, the ones changing least from frame to frame overall."""
+    out = np.array(frames).copy()
+    states = [(lift, a, b) for lift in BLADE_ARM_LIFTS for a, b in BLADE_WRIST_TURNS]
+
+    def apply(f, j, state):
+        lift, a, b = state
+        g = f.copy()
+        hand = SWORD_HAND[j]
+        if lift:
+            rotate_world(g, nb_limbs, SWORD_ARM[j][0], Z_AXIS, (1 if j == 1 else -1) * lift)
+        g[hand + 1] = zyx_from_rot(rot_zyx(g[hand + 1]) @ rot_zyx((0, int(a * 182), int(b * 182))))
+        return g
+
+    def clear(g, j):
+        if clearance.count(g, only=j):
+            return False
+        W, P = fk(nb_limbs, g)
+        hand = SWORD_HAND[j]
+        return (P[hand] + (W[hand] @ clearance.blades[j].T).T)[:, 1].min() >= BLADE_GROUND
+
+    def effort(s):
+        return 0.05 * (abs(s[1]) + abs(s[2])) + 0.5 * s[0]
+
+    def change(s, t):
+        return ((s[1] - t[1]) ** 2 + (s[2] - t[2]) ** 2 + 4 * (s[0] - t[0]) ** 2) / 15  # (big jumps cost the most)
+
+    for j in SWORD_HAND:
+        options = []
+        for f in out:  # (the identity first: most frames are clear as they are)
+            ok = [s for s in states if s == (0, 0, 0) and clear(f, j)]
+            options.append(ok or [s for s in states if clear(apply(f, j, s), j)])
+            if not options[-1]:
+                sys.exit("keep_blades_clear: no clear place for a scimitar")
+        cost = [{s: effort(s) for s in options[0]}]
+        back = [{}]
+        for k in range(1, len(out)):
+            cost.append({})
+            back.append({})
+            for s in options[k]:
+                p = min(cost[k - 1], key=lambda t: cost[k - 1][t] + change(t, s))
+                cost[k][s] = cost[k - 1][p] + change(p, s) + effort(s)
+                back[k][s] = p
+        s = min(cost[-1], key=cost[-1].get)
+        for k in range(len(out) - 1, -1, -1):
+            out[k] = apply(out[k], j, s)
+            s = back[k].get(s)
+    return out
+
+
 # Left/right limb pairs, and the reflection that maps each limb's local frame onto its mirror image's.
 NB_MIRROR = {1: 4, 2: 5, 3: 6, 8: 11, 9: 12, 10: 13}
 NB_MIRROR.update({b: a for a, b in NB_MIRROR.items()})
@@ -1338,9 +1522,16 @@ def main():
         add(f"HurtRise{suffix}", rise, "hurt by a fall: getting up" + note)
     reflections = choose_reflections(nb_limbs, nb_walk.table)
     # getting up from the guard's kneel: empty-handed, her right arm mirrors her left instead of holding a spear
-    add("GetUpBare", np.array([mirror_arm(f, nb_limbs, reflections, NB_L_ARM, NB_R_ARM)
-                               for f in tables["gPlayAsNabooruCrouchAnim"]]),
-        "the guard's kneel, right arm mirroring the left (no spear in hand)")
+    getup_bare = np.array([mirror_arm(f, nb_limbs, reflections, NB_L_ARM, NB_R_ARM)
+                           for f in tables["gPlayAsNabooruCrouchAnim"]])
+    add("GetUpBare", getup_bare, "the guard's kneel, right arm mirroring the left (no spear in hand)")
+    # knocked down from behind: onto her left side, lying, getting up
+    body = BodyPoints(nb_limbs)
+    add("KnockFront", make_knock_front(relaxed[0], getup_bare, nb_limbs, body),
+        "knocked down from behind: falls onto her left side, lies, gets up through the kneel")
+    knock_armed = keep_blades_clear(make_knock_front(armed_idle[0], tables["gPlayAsNabooruCrouchAnim"], nb_limbs, body),
+                                    nb_limbs, clearance)
+    add("KnockFrontArmed", knock_armed, "the same with scimitars in hand, blades clear of her and the ground")
     add("FlipBare", make_bare_flip(tables["gPlayAsNabooruFlipAnim"], soft[5], relaxed[0], nb_limbs, reflections),
         "backflip landing relaxed, for empty hands")
     for name, table in armed.items():

@@ -259,6 +259,18 @@ const Move kDamage = {
 }; // stops before she raises her sword again
 const Move kKnockdown = { "Knockdown", GEN(Defeat), GEN_SWORDS(Defeat), Mode::Sync, 0, 12 };
 const Move kDown = { "Down", GEN(Defeat), GEN_SWORDS(Defeat), Mode::Sync, 12, 22 };
+// Knocked down from behind (generated): the hit whips her upper body back, she pitches forward onto her left shoulder
+// and side, lies there curled, pushes herself up on her right hand and left forearm, gets her knees under her and rises
+// through the guard's kneel. One animation in three parts, each over one of Link's (fall, lying, getting up).
+const Move kGetUpFront = {
+    .name = "GetUpFront", .anim = GEN(KnockFrontArmed), .mode = Mode::Sync, .start = 13, .end = 49, .bareAnim = GEN(KnockFront)
+};
+const Move kDownFront = {
+    .name = "DownFront", .anim = GEN(KnockFrontArmed), .mode = Mode::Sync, .start = 5, .end = 13, .bareAnim = GEN(KnockFront)
+};
+const Move kKnockFront = {
+    .name = "KnockFront", .anim = GEN(KnockFrontArmed), .mode = Mode::Sync, .start = 0, .end = 5, .bareAnim = GEN(KnockFront)
+};
 // getting up from the kneel (the guard's kneel played backwards), over Link's whole get-up; empty-handed her right arm
 // mirrors her left instead of holding the guard's spear to her chest
 const Move kGetUp = {
@@ -335,6 +347,9 @@ const std::vector<Rule> kRules = {
     { { "side_jump" }, &kAirborne },
     { { "defense_hit", "defense_long_hit" }, &kBlock }, // a hit blocked with the shield
     { { "derth" }, &kDeath },
+    { { "back_down_wake" }, &kGetUpFront }, // knocked down from behind, onto her front
+    { { "back_downB" }, &kDownFront },
+    { { "back_downA" }, &kKnockFront },
     { { "down_wake" }, &kGetUp },
     { { "hip_down" }, &kBonk }, // rolled into a wall
     { { "_downB" }, &kDown },
