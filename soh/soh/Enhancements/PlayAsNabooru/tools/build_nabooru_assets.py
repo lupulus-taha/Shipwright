@@ -530,52 +530,140 @@ def place_foot(frame, nb_limbs, feet, leg, ankle, height, toes, flat=None):
     return f
 
 
-# Side hop (Link's is 6 frames in the air and under 7 units high): a crouch and a push-off from her toes while her
-# feet are still on the ground (the game keeps them there, the player is already rising), then a low skip with her
-# legs apart, reaching for the ground. Per frame of Link's hop, for a hop to her right: Link's height (game units;
-# 0 while her feet are kept down), her hips (model units) and lean towards the hop (degrees), torso bend, each foot's
-# (sideways reach, height of its lowest point above the ground in game units, toes-down pitch) for the leading and
-# trailing leg, and how far her arms have gone from her idle's to her pose in the air (negative: swung back).
+# Side hop (Link's: 6 frames in the air, under 7 units high, 12.75 units sideways per frame, then a landing during which
+# he slides 11.2 units more and stops). Hers, one key per frame of his, in an arc: a crouch, then a push-off from the
+# trailing foot, which stays where she took off while her hips go on over to the side; in the air her hips lead, her
+# legs tucked together trailing behind them, her hips turned towards the hop and her shoulders turned back against it,
+# her upper body tilted back towards where she came from and her arms kept on that side (a narrow figure); her
+# leading foot reaches out to where it will stand, plants there as she touches down and stays while she slides on over
+# it (sinking into the landing), the trailing foot setting down beside it, and she rises into `base`.
+# Per key, for a hop to her right (mirrored for the left): how far the player has travelled (game units), Link's height
+# (0 while her feet are kept on the ground), how far her hips are ahead of where they stand (game units, towards the
+# hop) and their height (model units), her hips' turn towards the hop, her shoulders' turn back against it (relative
+# to her hips) and her upper body's tilt back towards where she came from (degrees), her torso bending forward, each
+# foot's (shift towards the hop from where it stands, in game units, or "takeoff"/"landing": where it stood before the
+# hop / will stand after it; height of its lowest point above the ground, in game units; toes-down pitch) for the
+# trailing and the leading leg, and her arms: how far they have swung to the side she came from (negative: through
+# to the other side, landing).
+HOP_STEP = 12.75  # Link's sideways speed in the air (8.5, at 1.5 game units per frame)
+HOP_SLIDE = 11.2  # how far he slides on as he lands
+HOP_AIR = 6  # keys before the touchdown
 SIDE_HOP = [
-    dict(h=0.0, hips=-450, lean=0, bend=10, lead=(0, 0.0, 0), trail=(0, 0.0, 0), arms=-1.0),  # crouch
-    dict(h=0.0, hips=250, lean=7, bend=4, lead=(0, 0.0, 35), trail=(0, 0.0, 40), arms=0.5),  # push-off, on her toes
-    dict(h=6.0, hips=-250, lean=9, bend=2, lead=(250, 1.6, 25), trail=(-120, 2.4, 35), arms=0.85),
-    dict(h=6.8, hips=-300, lean=7, bend=2, lead=(380, 1.8, 20), trail=(-200, 2.8, 30), arms=1.0),
-    dict(h=6.0, hips=-250, lean=4, bend=2, lead=(420, 1.2, 15), trail=(-150, 2.4, 25), arms=1.0),
-    dict(h=3.8, hips=-250, lean=1, bend=2, lead=(350, 0.4, 5), trail=(-60, 1.6, 15), arms=1.0),
-    dict(h=0.0, hips=-300, lean=0, bend=4, lead=(150, 0.0, 0), trail=(0, 0.6, 10), arms=1.0),  # touching down
+    dict(travel=0, h=0.0, ahead=1.5, hips=-450, turn=8, twist=2, tilt=-3, bend=10,
+         trail=(0, 0.0, 0), lead=(0, 0.0, 0), arms=0.35),  # crouch, weight shifting over
+    dict(travel=1, h=0.0, ahead=0.5, hips=-250, turn=24, twist=6, tilt=8, bend=4,
+         trail=("takeoff", 0.0, 55), lead=(-7.5, 5.0, 30), arms=0.85),  # push-off: trailing toes still down
+    dict(travel=2, h=6.0, ahead=1.0, hips=-150, turn=34, twist=9, tilt=12, bend=3,
+         trail=(-8.5, 9.0, 50), lead=(-8.0, 12.0, 30), arms=1.0),
+    dict(travel=3, h=6.8, ahead=1.0, hips=-150, turn=34, twist=10, tilt=10, bend=3,
+         trail=(-5.5, 11.5, 40), lead=(-6.5, 14.0, 25), arms=1.0),
+    dict(travel=4, h=6.0, ahead=1.5, hips=-150, turn=30, twist=9, tilt=6, bend=3,
+         trail=(-3.5, 10.0, 30), lead=(-3.0, 10.0, 15), arms=0.9),
+    dict(travel=5, h=3.8, ahead=2.0, hips=-200, turn=22, twist=7, tilt=1, bend=4,
+         trail=(-1.5, 7.0, 25), lead=(3.5, 2.5, 0), arms=0.55),  # reaching for the ground
+    dict(travel=6, h=0.0, ahead=2.5, hips=-400, turn=12, twist=4, tilt=-4, bend=7,
+         trail=(1.5, 3.0, 15), lead=("landing", 0.0, 0), arms=0.15),  # touching down
+    dict(travel=7, h=0.0, ahead=1.5, hips=-750, turn=5, twist=-1, tilt=-7, bend=12,
+         trail=("landing", 0.8, 5), lead=("landing", 0.0, 0), arms=-0.3),  # slid on over the leading foot
+    dict(travel=7, h=0.0, ahead=0.8, hips=-600, turn=2, twist=-2, tilt=-5, bend=9,
+         trail=("landing", 0.0, 0), lead=("landing", 0.0, 0), arms=-0.2),
+    dict(travel=7, h=0.0, ahead=0.4, hips=-380, turn=1, twist=-1, tilt=-2, bend=5,
+         trail=("landing", 0.0, 0), lead=("landing", 0.0, 0), arms=-0.1),
+    dict(travel=7, h=0.0, ahead=0.15, hips=-190, turn=0, twist=0, tilt=-1, bend=2,
+         trail=("landing", 0.0, 0), lead=("landing", 0.0, 0), arms=0.0),
+    dict(travel=7, h=0.0, ahead=0.05, hips=-70, turn=0, twist=0, tilt=0, bend=1,
+         trail=("landing", 0.0, 0), lead=("landing", 0.0, 0), arms=0.0),
+    dict(travel=7, h=0.0, ahead=0.0, hips=-20, turn=0, twist=0, tilt=0, bend=0,
+         trail=("landing", 0.0, 0), lead=("landing", 0.0, 0), arms=0.0),
+    dict(travel=7, h=0.0, ahead=0.0, hips=0, turn=0, twist=0, tilt=0, bend=0,
+         trail=("landing", 0.0, 0), lead=("landing", 0.0, 0), arms=0.0),  # standing in `base`
 ]
-SIDE_HOP_ARMS_BACK = 12  # degrees her arms swing back in the crouch
-SIDE_HOP_LEAD_ARM = 10  # degrees the arm on the side she hops to goes further out
+SIDE_HOP_LANDING = HOP_AIR  # the landing starts at the touchdown key
+SIDE_HOP_FEET_TURN = 0.5  # in the air her feet turn this much of her hips' turn
+SIDE_HOP_HEAD_STEADY = 0.8  # her head keeps this much of its orientation in `base` (looking ahead)
+# Her arms kept on the side she came from (directions from shoulder to hand in model space for a hop to her right,
+# elbow bend): the arm on that side out and down behind her, the other across in front of her; swung through to the
+# other side on landing.
+SIDE_HOP_ARMS_BACK = {"near": ((0.45, -0.85, -0.2), 30), "far": ((0.15, -0.8, 0.55), 75)}
+SIDE_HOP_ARMS_THROUGH = {"near": ((-0.15, -0.95, 0.2), 20), "far": ((-0.35, -0.9, 0.2), 25)}
 
 
-def make_side_hop(base, nb_limbs, feet, right, air=None):
-    """A side hop from `base` (her idle, or her fighting stance) to her right or left. With `air` (her pose in the
-    air) her arms swing back, then out to it; without, her upper body keeps `base`'s (her stance's guard)."""
-    side = -1 if right else 1  # model +X is her left
+def hop_travel(key):
+    """How far the player has travelled sideways at a side hop key (game units)."""
+    return min(key["travel"], HOP_AIR) * HOP_STEP + (HOP_SLIDE if key["travel"] > HOP_AIR else 0.0)
+
+
+def turn_matrix(axis, degrees):
+    a = math.radians(degrees) / 2
+    return rot_from_quat(np.concatenate([[math.cos(a)], np.asarray(axis, float) / np.linalg.norm(axis) * math.sin(a)]))
+
+
+def steady_limb(frame, nb_limbs, limb, world, keep):
+    """`limb` turned so that `keep` of its orientation in model space is `world`'s."""
+    W, _ = fk(nb_limbs, frame)
+    target = rot_from_quat(slerp(quat_from_rot(W[limb]), quat_from_rot(world), keep))
+    frame[limb + 1] = zyx_from_rot(W[nb_limbs[limb].parent].T @ target)
+
+
+def hop_arms(frame, nb_limbs, toward, right, swing):
+    """Her arms swung `swing` of the way to the side she came from (negative: through to the side she hops to)."""
+    pose = SIDE_HOP_ARMS_BACK if swing >= 0 else SIDE_HOP_ARMS_THROUGH
+    near, far = (NB_L_ARM, NB_R_ARM) if right else (NB_R_ARM, NB_L_ARM)  # near: the arm on the side she came from
+    swung = frame.copy()
+    for arm, (direction, elbow) in ((near, pose["near"]), (far, pose["far"])):
+        x, y, z = direction
+        swung = aim_arm(swung, nb_limbs, arm, (-toward * x, y, z))
+        rotate_world(swung, nb_limbs, arm[1], X_AXIS, -elbow)
+    posed = blend_frames(frame, swung, abs(swing))
+    out = frame.copy()
+    for limb in NB_L_ARM + NB_R_ARM:
+        out[limb + 1] = posed[limb + 1]
+    return out
+
+
+SIDE_HOP_ARM_LIFT = range(5, 65, 5)  # degrees an arm may be raised out to the side to keep its scimitar off her legs
+
+
+def make_side_hop(base, nb_limbs, feet, right, bare_arms, clearance=None, swords=None):
+    """A side hop from `base` (her idle, or her fighting stance) to her right or left, landing back in `base`: the
+    keys of SIDE_HOP, one per frame of Link's hop (0 to HOP_AIR) and of his landing (from HOP_AIR on). With
+    `bare_arms` her arms swing to the side she came from; without, they keep `base`'s guard, turning with her torso.
+    With `clearance` (and `swords`, the scimitars in her hands), an arm whose blade would cut her (her legs swing by
+    it) is raised out to the side just enough."""
+    toward = -1 if right else 1  # model +X is her left
     lead, trail = (NB_R_LEG, NB_L_LEG) if right else (NB_L_LEG, NB_R_LEG)
-    lead_arm = NB_R_ARM if right else NB_L_ARM
     ground = {foot: feet.lowest(base, foot) for foot in (NB_L_LEG[2], NB_R_LEG[2])}
-    _, standing = fk(nb_limbs, base)  # where her ankles are
+    Wb, standing = fk(nb_limbs, base)  # her ankles and feet as she stands
+    landed = hop_travel(SIDE_HOP[-1])
     out = []
     for key in SIDE_HOP:
+        travel = hop_travel(key)
         f = base.copy()
+        f[0, 0] += toward * key["ahead"] * 100
         f[0, 1] += key["hips"]
-        rotate_world(f, nb_limbs, 0, Z_AXIS, -side * key["lean"])
+        rotate_world(f, nb_limbs, 0, Y_AXIS, -toward * key["turn"])  # (+Y turns her to face her left)
+        rotate_world(f, nb_limbs, NB_TORSO, Y_AXIS, toward * key["twist"])
+        rotate_world(f, nb_limbs, NB_TORSO, Z_AXIS, toward * key["tilt"])  # (+Z leans her to her right)
         bend_forward(f, nb_limbs, NB_TORSO, key["bend"])
-        if air is not None:
-            w = key["arms"]
-            if w < 0:
-                for upper in (NB_L_ARM[0], NB_R_ARM[0]):
-                    rotate_world(f, nb_limbs, upper, X_AXIS, -w * SIDE_HOP_ARMS_BACK)
-            else:
-                posed = blend_frames(base, air, w)
-                for limb in NB_L_ARM + NB_R_ARM:
-                    f[limb + 1] = posed[limb + 1]
-                rotate_world(f, nb_limbs, lead_arm[0], Z_AXIS, side * SIDE_HOP_LEAD_ARM * w)
-        for leg, (dx, clearance, toes) in ((lead, key["lead"]), (trail, key["trail"])):
-            height = ground[leg[2]] + (clearance - key["h"]) * 100
-            f = place_foot(f, nb_limbs, feet, leg, standing[leg[2]] + [side * dx, 0, 0], height, toes)
+        steady_limb(f, nb_limbs, NB_HEAD, Wb[NB_HEAD], SIDE_HOP_HEAD_STEADY)
+        if bare_arms:
+            f = hop_arms(f, nb_limbs, toward, right, key["arms"])
+        for leg, (shift, above, toes) in ((trail, key["trail"]), (lead, key["lead"])):
+            shift = -travel if shift == "takeoff" else (landed - travel) if shift == "landing" else shift
+            height = ground[leg[2]] + (above - key["h"]) * 100
+            flat = turn_matrix(Y_AXIS, -toward * key["turn"] * SIDE_HOP_FEET_TURN) @ Wb[leg[2]]
+            f = place_foot(f, nb_limbs, feet, leg, standing[leg[2]] + [toward * shift * 100, 0, 0], height, toes,
+                           flat=flat)
+        if clearance is not None:
+            for j, arm in SWORD_ARM.items():
+                if clearance.count(f, swords, only=j):
+                    out_side = 1 if j == 1 else -1
+                    for lift in SIDE_HOP_ARM_LIFT:
+                        raised = f.copy()
+                        rotate_world(raised, nb_limbs, arm[0], Z_AXIS, out_side * lift)
+                        if not clearance.count(raised, swords, only=j):
+                            break
+                    f = raised
         out.append(f)
     return np.array(out)
 
@@ -744,10 +832,13 @@ class BladeClearance:
                          if np.linalg.norm(v[a] - v[b]) < 1500 for t in (0.25, 0.5, 0.75)]
             self.blades[j] = np.vstack(pts)
 
-    def count(self, frame, swords=None):
+    def count(self, frame, swords=None, only=None):
+        """(`only`: just the scimitar in that hand, 1 left or 2 right)"""
         W, P = fk(self.limbs, frame)
         n = 0
         for j, hand in SWORD_HAND.items():
+            if only is not None and j != only:
+                continue
             grip = rot_zyx(swords[j]) if swords is not None else np.eye(3)
             pts = P[hand] + (W[hand] @ grip @ self.blades[j].T).T
             for i, (center, half) in self.boxes.items():
@@ -1168,14 +1259,15 @@ def main():
     if clipping:
         sys.exit(f"BonkArmed: scimitars cut through her body as she gets up ({clipping} points)")
     add("BonkArmed", bonk_armed, "the same, scimitars in hand, blades clear of her as she gets up", bonk_swords)
-    # side hops: bare from her idle, arms out as in the air; armed from her fighting stance, guard kept
+    # side hops, with their landings: bare from her idle, arms swinging; armed from her fighting stance, guard kept
     feet = FootBoxes(nb_limbs)
     neutral = tables["gPlayAsNabooruNeutralAnim"]
     for right, suffix in ((True, "R"), (False, "L")):
-        add(f"SideHop{suffix}", make_side_hop(relaxed[0], nb_limbs, feet, right, air[0]),
-            f"side hop to her {'right' if right else 'left'}: crouch, push-off, low skip")
-        hop = make_side_hop(neutral[0], nb_limbs, feet, right)
-        hop_swords = np.repeat(sword_tables["gPlayAsNabooruNeutralAnim"][:1], len(hop), axis=0)
+        add(f"SideHop{suffix}", make_side_hop(relaxed[0], nb_limbs, feet, right, bare_arms=True),
+            f"side hop to her {'right' if right else 'left'} in an arc, landing: hips first, feet trailing")
+        grip = sword_tables["gPlayAsNabooruNeutralAnim"][0]
+        hop = make_side_hop(neutral[0], nb_limbs, feet, right, bare_arms=False, clearance=clearance, swords=grip)
+        hop_swords = np.repeat(grip[None], len(hop), axis=0)
         clipping = sum(clearance.count(f, s) for f, s in zip(hop, hop_swords))
         if clipping:
             sys.exit(f"SideHopArmed{suffix}: scimitars cut through her body ({clipping} points)")

@@ -145,17 +145,22 @@ const Move kBackflipEnd = { .name = "BackflipEnd",
                             .bareAnim = GEN(FlipBare) }; // empty-handed she stands up relaxed
 // jumping and falling (landings are the end of the fighter's drop-from-the-ceiling animation)
 const Move kAirborne = { "Airborne", GEN(Air), nullptr, Mode::Pose, 0 };       // knees drawn up, arms out
-// Link's side hop leaves the ground at once and is over in 6 frames, under 7 units high. Hers (generated, frame by
-// frame with his) crouches and pushes off from her toes with her feet still on the ground (kept there, see
-// KeepFeetDown), then skips low with her legs apart; armed, from her fighting stance. No blending into it: the
-// crouch has to show at once (only her arms take a few frames, they may have been folded).
+// Link's side hop leaves the ground at once and is over in 6 frames, under 7 units high, then he slides on a little as
+// he lands. Hers (generated, frame by frame with his hop and his landing) goes in an arc: a crouch, a push-off from
+// her trailing toes, which stay where she took off (kept on the ground, see KeepFeetDown) while her hips go on over;
+// in the air her hips lead with her legs tucked and trailing, hips turned away from the hop, arms on the side she came
+// from; her leading foot plants where it will stand and she slides on over it into the landing. Armed, from her
+// fighting stance and back into it. No blending into it: the crouch has to show at once (only her arms take a few
+// frames, they may have been folded). Frames 0-6 are the hop, 6-13 the landing.
 constexpr f32 kHopArmsBlendIn = 0.34f;
+constexpr f32 kSideHopTouchdown = 6.0f;
+constexpr f32 kSideHopLanded = 13.0f;
 const Move kSideHopR = { .name = "SideHopR",
                          .anim = GEN(SideHopArmedR),
                          .swords = GEN_SWORDS(SideHopArmedR),
                          .mode = Mode::Sync,
                          .start = 0,
-                         .end = 6,
+                         .end = kSideHopTouchdown,
                          .bareAnim = GEN(SideHopR),
                          .blendIn = 1.0f,
                          .armsBlendIn = kHopArmsBlendIn };
@@ -164,10 +169,24 @@ const Move kSideHopL = { .name = "SideHopL",
                          .swords = GEN_SWORDS(SideHopArmedL),
                          .mode = Mode::Sync,
                          .start = 0,
-                         .end = 6,
+                         .end = kSideHopTouchdown,
                          .bareAnim = GEN(SideHopL),
                          .blendIn = 1.0f,
                          .armsBlendIn = kHopArmsBlendIn };
+const Move kSideHopLandR = { .name = "SideHopLandR",
+                             .anim = GEN(SideHopArmedR),
+                             .swords = GEN_SWORDS(SideHopArmedR),
+                             .mode = Mode::Sync,
+                             .start = kSideHopTouchdown,
+                             .end = kSideHopLanded,
+                             .bareAnim = GEN(SideHopR) };
+const Move kSideHopLandL = { .name = "SideHopLandL",
+                             .anim = GEN(SideHopArmedL),
+                             .swords = GEN_SWORDS(SideHopArmedL),
+                             .mode = Mode::Sync,
+                             .start = kSideHopTouchdown,
+                             .end = kSideHopLanded,
+                             .bareAnim = GEN(SideHopL) };
 constexpr f32 kSideHopGroundFrames = 1.0f; // Link's frames of the hop during which her feet stay on the ground
 const Move kLand = { "Land", GEN(Jump), GEN_SWORDS(Jump), Mode::Sync, 1, 16 }; // after a long drop, standing
 // after a hop or a medium drop: the same landing with her knees half as bent, settling into her idle
@@ -276,6 +295,8 @@ const std::vector<Rule> kRules = {
     { { "_kiru" }, &kSlash },
     { { "backturn_jump_end" }, &kBackflipEnd },
     { { "backturn_jump" }, &kBackflip },
+    { { "Rside_jump_end" }, &kSideHopLandR }, // (also his landing with an enemy targeted, "..._endR")
+    { { "Lside_jump_end" }, &kSideHopLandL },
     { { "side_jump_end" }, &kLandShort },
     { { "Rside_jump" }, &kSideHopR },
     { { "Lside_jump" }, &kSideHopL },
@@ -734,7 +755,8 @@ bool IsAttack(const Move* move) {
 // moves that give way to her walk/run when Link moves while his animation is stalled (see Nabooru_OnPlayerUpdate)
 bool YieldsToLocomotion(const Move* move) {
     return IsAttack(move) || move == &kSpinEnd || move == &kLandQuick || move == &kBackflipEnd ||
-           move == &kJumpSlashEnd || move == &kLand || move == &kLandShort || move == &kLandShortStance;
+           move == &kJumpSlashEnd || move == &kLand || move == &kLandShort || move == &kLandShortStance ||
+           move == &kSideHopLandR || move == &kSideHopLandL;
 }
 
 void UpdateEyes() {
