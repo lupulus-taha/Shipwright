@@ -134,3 +134,45 @@ def nearest_rotation(M) -> np.ndarray:
     U, _, Vt = np.linalg.svd(M)
     D = np.diag([1, 1, np.sign(np.linalg.det(U @ Vt))])
     return U @ D @ Vt
+
+
+# Link (adult): his skeleton in object_link_boy, his animations in the link_animetion segment (raw frames: 22 Vec3s,
+# root translation then one rotation per limb, and a face index).
+LINK_LIMBS = ["ROOT", "WAIST", "LOWER", "R_THIGH", "R_SHIN", "R_FOOT", "L_THIGH", "L_SHIN", "L_FOOT", "UPPER", "HEAD",
+              "HAT", "COLLAR", "L_SHOULDER", "L_FOREARM", "L_HAND", "R_SHOULDER", "R_FOREARM", "R_HAND", "BACK", "TORSO"]
+LINK_LIMB = {name: i for i, name in enumerate(LINK_LIMBS)}
+
+
+def parse_link_skeleton() -> list[Limb]:
+    obj = "object_link_boy"
+    names = re.findall(r"&?(\w+Limb)\b", re.sub(r"//[^\n]*", "", _read(ASSETS / obj / "gLinkAdultLimbs.inc.c")))
+    limbs = []
+    for n in names:
+        t = _read(ASSETS / obj / f"{n}.inc.c")
+        xyz = _ints(re.search(r"\{([^}]*)\}\s*,\s*//\s*jointPos", t, re.S).group(1))[:3]
+
+        def idx(field):
+            tok = re.search(r"\*/\s*([^,]+),\s*//\s*" + field, t).group(1).strip()
+            if tok == "LIMB_DONE":
+                return 255
+            m = re.match(r"PLAYER_LIMB_(\w+)\s*-\s*1", tok)
+            return LINK_LIMB[m.group(1)] if m else int(tok, 0)
+
+        limbs.append(Limb(n, np.array(xyz, float), idx("child"), idx("sibling")))
+
+    def walk(i, parent):
+        while i != 255:
+            limbs[i].parent = parent
+            walk(limbs[i].child, i)
+            i = limbs[i].sibling
+
+    walk(0, -1)
+    return limbs
+
+
+def parse_link_anim(name: str) -> np.ndarray:
+    """gPlayerAnim_link_<name>: [frame, 22, 3] (root translation, then the 21 limbs' rotations)."""
+    path = ASSETS.parent / "misc" / "link_animetion" / f"gPlayerAnim_link_{name}_Data.inc.c"
+    v = [((x + 0x8000) & 0xFFFF) - 0x8000 for x in _ints(re.sub(r"//[^\n]*", "", _read(path)))]
+    n = len(v) // 67
+    return np.array(v[: n * 67]).reshape(n, 67)[:, :66].reshape(n, 22, 3)
