@@ -1539,6 +1539,13 @@ void PlayAsNabooru_DebugState(const char** move, float* frame) {
     }
 }
 
+// For tools: her root translation as drawn (model units).
+void PlayAsNabooru_DebugRoot(short* x, short* y, short* z) {
+    *x = sFinalJoints[0].x;
+    *y = sFinalJoints[0].y;
+    *z = sFinalJoints[0].z;
+}
+
 // For tools: how much her pose changed since the last call (once per frame): the largest joint rotation in degrees and
 // which joint, and how far the root moved (model units). Freezes show up as zeros, pops as spikes.
 void PlayAsNabooru_DebugMotion(float* maxDegrees, int* joint, float* rootMove) {

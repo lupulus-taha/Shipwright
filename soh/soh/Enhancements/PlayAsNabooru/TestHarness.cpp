@@ -65,6 +65,7 @@ extern GameState* gGameState;
 
 void PlayAsNabooru_DebugState(const char** move, float* frame);
 void PlayAsNabooru_DebugMotion(float* maxDegrees, int* joint, float* rootMove);
+void PlayAsNabooru_DebugRoot(short* x, short* y, short* z);
 void PlayAsNabooru_DebugForce(const char* name, float frame, const char* swords, float swordsFrame);
 const char* Jackal_DebugAction(Actor* actor);
 const char* Jackal_DebugPack();
@@ -265,15 +266,23 @@ void LogFrame() {
     PlayAsNabooru_DebugMotion(&motion, &motionJoint, &rootMove);
     SkelAnime* link = &player->skelAnime;
     SkelAnime* upper = &player->upperSkelAnime;
+    // how far the player is along the way they face, and how far ahead of that Link's and her drawn roots are (units)
+    float forward = player->actor.world.pos.x * Math_SinS(player->actor.shape.rot.y) +
+                    player->actor.world.pos.z * Math_CosS(player->actor.shape.rot.y);
+    short hx, hy, hz;
+    PlayAsNabooru_DebugRoot(&hx, &hy, &hz);
+    float linkRoot = (link->jointTable != nullptr) ? link->jointTable[0].z * player->actor.scale.z : 0.0f;
+    float herRoot = hz * player->actor.scale.z;
     fprintf(sLog,
             "%5d step%-3zu link %-34s %5.1f/%5.1f up %-26s %5.1f | nb %-22s %5.1f | y %7.1f vy %5.1f spd %5.1f "
-            "st1 %08X st2 %08X bg %04X face %04X dir %04X mv %4.1f fall %d dpose %5.1f@%-2d droot %5.0f\n",
+            "st1 %08X st2 %08X bg %04X face %04X dir %04X mv %4.1f fall %d dpose %5.1f@%-2d droot %5.0f "
+            "fwd %7.1f lroot %6.1f nroot %6.1f\n",
             sFrame, sStepIndex, ShortAnimName(link->animation), link->curFrame, link->endFrame,
             ShortAnimName(upper->animation), upper->curFrame, move, moveFrame, player->actor.world.pos.y,
             player->actor.velocity.y, player->actor.speedXZ, player->stateFlags1, player->stateFlags2,
             player->actor.bgCheckFlags, (u16)player->actor.shape.rot.y, (u16)player->actor.world.rot.y,
             sqrtf(SQ(player->actor.world.pos.x - sLastPos.x) + SQ(player->actor.world.pos.z - sLastPos.z)),
-            player->fallDistance, motion, motionJoint, rootMove);
+            player->fallDistance, motion, motionJoint, rootMove, forward, linkRoot, herRoot);
     sLastPos = player->actor.world.pos;
 
     if (!sLogActors.empty()) {
