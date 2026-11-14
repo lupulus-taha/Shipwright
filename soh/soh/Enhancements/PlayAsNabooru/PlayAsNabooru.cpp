@@ -210,6 +210,24 @@ const Move kLandShort = { .name = "LandShort",
                           .bareAnim = GEN(LandLow) };
 // the same while Z-targeting with scimitars (side hops): settling into her fighting stance, which follows
 const Move kLandShortStance = { "LandShortStance", GEN(LandLowStance), nullptr, Mode::Sync, 1, 16 };
+// After a drop of up to 80 units Link sinks deep into his landing for 11 frames ("short_landing"). Hers is a light dip
+// of the same landing, over his first 6 frames, then on into her idle.
+constexpr f32 kLandDropLinkTo = 9.0f;
+const Move kLandDrop = { .name = "LandDrop",
+                         .anim = GEN(LandLightArmed),
+                         .swords = nullptr,
+                         .mode = Mode::Sync,
+                         .start = 1,
+                         .end = 16,
+                         .bareAnim = GEN(LandLight),
+                         .linkTo = kLandDropLinkTo };
+const Move kLandDropStance = { .name = "LandDropStance",
+                               .anim = GEN(LandLightStance),
+                               .swords = nullptr,
+                               .mode = Mode::Sync,
+                               .start = 1,
+                               .end = 16,
+                               .linkTo = kLandDropLinkTo };
 // Hurt by a long fall, Link crouches (his landing up to frame 8), holds it shaking while he is stunned, then plays the
 // rest to get up. Hers (generated): a hard landing into a deep squat, folded over her knees, head down, arms hanging;
 // breathing hard (and shaking as he does); standing up into her idle.
@@ -320,8 +338,8 @@ const std::vector<Rule> kRules = {
     { { "_downA", "ice_down" }, &kKnockdown },
     { { "_hit", "_shit", "damage" }, &kDamage },
     // Link's "normal_landing" is his fall, and also his touchdown after a long drop (see Nabooru_OnPlayerUpdate)
-    // (Link's "short_landing" is his landing after a drop of up to 80 units)
-    { { "run_jump_end", "front_jump_end", "anchor_landing", "short_landing" }, &kLandShort },
+    { { "run_jump_end", "front_jump_end", "anchor_landing" }, &kLandShort },
+    { { "short_landing" }, &kLandDrop }, // after a drop of up to 80 units
     { { "normal_run_jump" }, &kRunJump }, // leaping off a ledge from a run
     { { "landing", "normal_jump", "run_jump", "front_jump" }, &kAirborne },
     { { "talk" }, &kHips },
@@ -769,6 +787,7 @@ bool IsAttack(const Move* move) {
 bool YieldsToLocomotion(const Move* move) {
     return IsAttack(move) || move == &kSpinEnd || move == &kLandQuick || move == &kBackflipEnd ||
            move == &kJumpSlashEnd || move == &kLand || move == &kLandShort || move == &kLandShortStance ||
+           move == &kLandDrop || move == &kLandDropStance ||
            move == &kSideHopLandR || move == &kSideHopLandL;
 }
 
@@ -1034,6 +1053,10 @@ void Nabooru_OnPlayerUpdate() {
         body = &kLandQuick;
     } else if (body != &kLandQuick) {
         sLandingFrames = 0;
+    }
+    if (body == &kLandDrop && sShowSwords && IsTargeting(player) && HasResource(kLandDropStance.anim) &&
+        HasResource(kStance.anim)) {
+        body = &kLandDropStance;
     }
 
     f32 stride = 1.0f;
