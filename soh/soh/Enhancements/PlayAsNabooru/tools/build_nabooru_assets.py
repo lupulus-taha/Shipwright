@@ -1337,6 +1337,10 @@ def main():
         add(f"HurtHold{suffix}", hold, "hurt by a fall: breathing hard in the squat" + note)
         add(f"HurtRise{suffix}", rise, "hurt by a fall: getting up" + note)
     reflections = choose_reflections(nb_limbs, nb_walk.table)
+    # getting up from the guard's kneel: empty-handed, her right arm mirrors her left instead of holding a spear
+    add("GetUpBare", np.array([mirror_arm(f, nb_limbs, reflections, NB_L_ARM, NB_R_ARM)
+                               for f in tables["gPlayAsNabooruCrouchAnim"]]),
+        "the guard's kneel, right arm mirroring the left (no spear in hand)")
     add("FlipBare", make_bare_flip(tables["gPlayAsNabooruFlipAnim"], soft[5], relaxed[0], nb_limbs, reflections),
         "backflip landing relaxed, for empty hands")
     for name, table in armed.items():

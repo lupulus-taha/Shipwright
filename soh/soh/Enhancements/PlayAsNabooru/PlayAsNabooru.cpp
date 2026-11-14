@@ -259,8 +259,11 @@ const Move kDamage = {
 }; // stops before she raises her sword again
 const Move kKnockdown = { "Knockdown", GEN(Defeat), GEN_SWORDS(Defeat), Mode::Sync, 0, 12 };
 const Move kDown = { "Down", GEN(Defeat), GEN_SWORDS(Defeat), Mode::Sync, 12, 22 };
-// getting up from the kneel (the guard's kneel played backwards), over Link's whole get-up
-const Move kGetUp = { "GetUp", GEN(Crouch), nullptr, Mode::Sync, 10, 0 };
+// getting up from the kneel (the guard's kneel played backwards), over Link's whole get-up; empty-handed her right arm
+// mirrors her left instead of holding the guard's spear to her chest
+const Move kGetUp = {
+    .name = "GetUp", .anim = GEN(Crouch), .mode = Mode::Sync, .start = 10, .end = 0, .bareAnim = GEN(GetUpBare)
+};
 // Rolling into a wall, Link bounces back onto his backside, sits a moment and gets up, all in one animation. Hers
 // (generated) falls back onto her backside (the end of the fighter's defeat), bounces and settles, then rises through
 // the guard's kneel into her idle; each part follows his. He then stands still for a few frames: she goes on into her
