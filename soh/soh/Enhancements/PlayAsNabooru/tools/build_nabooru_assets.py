@@ -451,6 +451,20 @@ def make_air(relaxed_frame, walk_mean, nb_limbs, arm_out, elbow, hips, knees, le
     return f[None]
 
 
+ARMED_RUN_SWING = 0.45  # with scimitars in hand her arms swing this much of her run's swing (about her walk's)
+
+
+def damp_swing(table, limbs, k):
+    """Each of `limbs` keeps only `k` of its motion around its average pose over the cycle."""
+    out = table.copy()
+    for limb in limbs:
+        qs = [quat_from_rot(rot_zyx(f[limb + 1])) for f in table]
+        mean = quat_mean(qs)
+        for i, q in enumerate(qs):
+            out[i, limb + 1] = zyx_from_rot(rot_from_quat(quat_mul(mean, quat_pow(quat_mul(quat_conj(mean), q), k))))
+    return out
+
+
 def make_run_back(run, nb_limbs, lean):
     """Her run with the torso upright (leaning back by `lean` degrees), to play backwards."""
     out = run.copy()
@@ -885,11 +899,14 @@ def main():
     lean = forward_lean(nb_limbs, run) - forward_lean(nb_limbs, nb_walk.table) + 4.0
     add("RunBack", make_run_back(run, nb_limbs, lean), f"run leaning back {lean:.1f} degrees, for running backwards")
 
-    # moving with scimitars out: her own walk/run arm swing, wrists turned to keep the blades off her body
+    # moving with scimitars out: her own walk/run arm swing (less of it running), wrists turned to keep the blades off
+    # her body
+    armed_run = damp_swing(run, NB_L_ARM + NB_R_ARM, ARMED_RUN_SWING)
     armed = {"ArmedIdle": armed_idle, "ArmedTired": armed_tired,
              "ArmedWalk": np.array([hold_blades(f, nb_limbs, HOLD_WALK) for f in nb_walk.table]),
-             "ArmedRun": np.array([hold_blades(f, nb_limbs, HOLD_RUN) for f in run]),
-             "ArmedRunBack": np.array([hold_blades(f, nb_limbs, HOLD_RUN) for f in make_run_back(run, nb_limbs, lean)])}
+             "ArmedRun": np.array([hold_blades(f, nb_limbs, HOLD_RUN) for f in armed_run]),
+             "ArmedRunBack": np.array([hold_blades(f, nb_limbs, HOLD_RUN)
+                                       for f in make_run_back(armed_run, nb_limbs, lean)])}
     jump = tables["gPlayAsNabooruJumpAnim"]
     soft = make_soft_landing(jump, relaxed[0])
     add("LandLow", make_low_landing(jump, relaxed[0], arms_from=air[0]),
