@@ -66,6 +66,11 @@ struct Move {
     f32 span = 1.0f;                // Sync: the fraction of Link's animation that start..end covers
     f32 swordsFrame = -1.0f;        // >= 0: hold this frame of `swords` instead of following the body's frame
     const char* bareAnim = nullptr; // the same move for empty hands (same frame count), if it differs
+    // Sync over part of Link's animation: from his frame `linkFrom` to `linkTo` (-1: his last frame), after which
+    // `next` takes over. Moves without these follow all of it (or the first `span`).
+    f32 linkFrom = 0.0f;
+    f32 linkTo = -1.0f;
+    const Move* next = nullptr;
 };
 
 // The jump attack leaps higher than the fighter's flip (model units, her model is drawn at 1/100 scale).
@@ -155,6 +160,37 @@ const Move kKnockdown = { "Knockdown", GEN(Defeat), GEN_SWORDS(Defeat), Mode::Sy
 const Move kDown = { "Down", GEN(Defeat), GEN_SWORDS(Defeat), Mode::Sync, 12, 22 };
 // getting up from the kneel (the guard's kneel played backwards), over Link's whole get-up
 const Move kGetUp = { "GetUp", GEN(Crouch), nullptr, Mode::Sync, 10, 0 };
+// Rolling into a wall, Link bounces back onto his backside, sits a moment and gets up, all in one animation. Hers
+// (generated) falls back onto her backside (the end of the fighter's defeat), bounces and settles, then rises through
+// the guard's kneel into her idle; each part follows his.
+const Move kBonkUp = { .name = "BonkUp",
+                       .anim = GEN(BonkArmed),
+                       .swords = GEN_SWORDS(BonkArmed),
+                       .mode = Mode::Sync,
+                       .start = 12,
+                       .end = 23,
+                       .bareAnim = GEN(Bonk),
+                       .linkFrom = 13.5f,
+                       .linkTo = 24.0f };
+const Move kBonkSit = { .name = "BonkSit",
+                        .anim = GEN(BonkArmed),
+                        .swords = GEN_SWORDS(BonkArmed),
+                        .mode = Mode::Sync,
+                        .start = 3,
+                        .end = 12,
+                        .bareAnim = GEN(Bonk),
+                        .linkFrom = 4.5f,
+                        .linkTo = 13.5f,
+                        .next = &kBonkUp };
+const Move kBonk = { .name = "Bonk",
+                     .anim = GEN(BonkArmed),
+                     .swords = GEN_SWORDS(BonkArmed),
+                     .mode = Mode::Sync,
+                     .start = 0,
+                     .end = 3,
+                     .bareAnim = GEN(Bonk),
+                     .linkTo = 4.5f,
+                     .next = &kBonkSit };
 const Move kDeath = { "Death", GEN(Faint), nullptr, Mode::Once, 0, -1, 1.0f };
 // how she holds the scimitars when the current animation has no sword data (e.g. running with swords drawn)
 const char* const kDefaultSwords = GEN_SWORDS(Carry);
@@ -191,7 +227,8 @@ const std::vector<Rule> kRules = {
     { { "defense_hit", "defense_long_hit" }, &kBlock }, // a hit blocked with the shield
     { { "derth" }, &kDeath },
     { { "down_wake" }, &kGetUp },
-    { { "_downB", "hip_down" }, &kDown },
+    { { "hip_down" }, &kBonk }, // rolled into a wall
+    { { "_downB" }, &kDown },
     { { "_downA", "ice_down" }, &kKnockdown },
     { { "_hit", "_shit", "damage" }, &kDamage },
     // Link's "normal_landing" is his fall, and also his touchdown after a long drop (see Nabooru_OnPlayerUpdate)
@@ -461,15 +498,30 @@ bool OnceDone(const Layer& layer) {
     return (end >= layer.move->start) ? layer.onceFrame >= end : layer.onceFrame <= end;
 }
 
-// fraction [0, 1] of Link's current animation that has played
-f32 LinkAnimProgress(Player* player) {
+f32 LinkEndFrame(Player* player) {
     SkelAnime* link = &player->skelAnime;
-    f32 end = (link->endFrame > 0.0f) ? link->endFrame : link->animLength - 1.0f;
-    return (end > 0.0f) ? CLAMP(link->curFrame / end, 0.0f, 1.0f) : 0.0f;
+    return (link->endFrame > 0.0f) ? link->endFrame : link->animLength - 1.0f;
 }
 
-// progress through a Sync move: it covers the first `span` of Link's animation
+// fraction [0, 1] of Link's current animation that has played
+f32 LinkAnimProgress(Player* player) {
+    f32 end = LinkEndFrame(player);
+    return (end > 0.0f) ? CLAMP(player->skelAnime.curFrame / end, 0.0f, 1.0f) : 0.0f;
+}
+
+// Link's frame where a Sync move ends
+f32 LinkTo(const Move* move, Player* player) {
+    return (move->linkTo >= 0.0f) ? move->linkTo : LinkEndFrame(player);
+}
+
+// progress through a Sync move: it covers Link's frames linkFrom..linkTo, or else the first `span` of his animation
 f32 MoveProgress(const Move* move, Player* player) {
+    if (move->linkFrom > 0.0f || move->linkTo >= 0.0f) {
+        f32 to = LinkTo(move, player);
+        return (to > move->linkFrom)
+                   ? CLAMP((player->skelAnime.curFrame - move->linkFrom) / (to - move->linkFrom), 0.0f, 1.0f)
+                   : 1.0f;
+    }
     return MIN(LinkAnimProgress(player) / move->span, 1.0f);
 }
 
@@ -806,6 +858,9 @@ void Nabooru_OnPlayerUpdate() {
     sLinkPrevFrame = link->curFrame;
 
     const Move* body = MatchRule(link->animation);
+    while (body != nullptr && body->next != nullptr && link->curFrame >= LinkTo(body, player)) {
+        body = body->next; // the next part of Link's animation
+    }
     const Move* overlay = nullptr;
     f32 bodySpeed = 1.0f, overlaySpeed = 1.0f;
     bool freezeBody = false;

@@ -639,6 +639,51 @@ def make_bare_flip(flip, crouch, rest, nb_limbs, reflections):
     return out
 
 
+BONK_FALL = (7, 19)  # the fighter's defeat: falling back onto her backside (7-10), bouncing and settling (10-19)
+BONK_KNEEL = (10, 3)  # the spear guard's kneel, played backwards (before 3 she lifts a foot to step back)
+
+
+def smoothstep(t):
+    t = min(max(t, 0.0), 1.0)
+    return t * t * (3 - 2 * t)
+
+
+def make_bonk(defeat, kneel, rest, defeat_swords=None, clearance=None):
+    """Rolling into a wall: the end of the fighter's defeat (falling back onto her backside, bouncing, settling),
+    then getting up through the guard's kneel, played backwards, into `rest` (her idle). Her arms and head ease
+    into `rest`'s along the way: the guard looks to one side, then the other as she rises, which is a whip of the
+    head when it's this quick. With `defeat_swords` (scimitars in hand) also returns the scimitars, easing into her
+    grip; with `clearance`, a frame where a blade would cut her eases its arms a little less or more (crouched,
+    her idle's arms would put the blades through her thighs), whichever is nearest and clear.
+    Frames: fall 0-3, sitting 3-12, rising 12-23."""
+    first, last = BONK_FALL
+    sit = defeat[last]
+    rise = [blend_frames(sit, kneel[BONK_KNEEL[0]], 0.5)]
+    rise += [kneel[k] for k in range(BONK_KNEEL[0], BONK_KNEEL[1] - 1, -1)]
+    rise += [blend_frames(kneel[BONK_KNEEL[1]], rest, 0.5), rest]
+    out = list(defeat[first: last + 1])
+    swords = None if defeat_swords is None else list(defeat_swords[first: last + 1])
+    grip = None if defeat_swords is None else np.zeros_like(defeat_swords[0])  # the fighter's grip, as in her idle
+    for i, frame in enumerate(rise):
+        scheduled = smoothstep((i + 1) / len(rise))
+        frame = frame.copy()
+        frame[NB_HEAD + 1] = blend_frames(sit, rest, scheduled)[NB_HEAD + 1]
+        tries = [scheduled] + sorted(np.arange(0.0, 1.0001, 0.05), key=lambda w: abs(w - scheduled))
+        for w in tries:
+            w = min(w, 1.0)
+            eased = blend_frames(sit, rest, w)  # where her arms are, rotation by rotation
+            posed = frame.copy()
+            for limb in NB_L_ARM + NB_R_ARM:
+                posed[limb + 1] = eased[limb + 1]
+            blades = None if swords is None else blend_frames(defeat_swords[last], grip, w)
+            if clearance is None or clearance.count(posed, blades) == 0:
+                break
+        out.append(posed)
+        if swords is not None:
+            swords.append(blades)
+    return np.array(out) if swords is None else (np.array(out), np.array(swords))
+
+
 # Left/right limb pairs, and the reflection that maps each limb's local frame onto its mirror image's.
 NB_MIRROR = {1: 4, 2: 5, 3: 6, 8: 11, 9: 12, 10: 13}
 NB_MIRROR.update({b: a for a, b in NB_MIRROR.items()})
@@ -852,6 +897,15 @@ def main():
     armed["LandLowArmed"] = make_low_landing(jump, armed_idle[0], clearance)
     # Z-targeting with scimitars (side hops): settling into her fighting stance, which comes next
     armed["LandLowStance"] = make_low_landing(jump, tables["gPlayAsNabooruNeutralAnim"][0], clearance)
+    defeat, kneel = tables["gPlayAsNabooruDefeatAnim"], tables["gPlayAsNabooruCrouchAnim"]
+    add("Bonk", make_bonk(defeat, kneel, relaxed[0]), "rolled into a wall: falls back, sits, gets up relaxed")
+    bonk_armed, bonk_swords = make_bonk(defeat, kneel, armed_idle[0], sword_tables["gPlayAsNabooruDefeatAnim"],
+                                        clearance)
+    clipping = sum(clearance.count(f, s) for f, s in zip(bonk_armed[BONK_FALL[1] - BONK_FALL[0]:],
+                                                          bonk_swords[BONK_FALL[1] - BONK_FALL[0]:]))
+    if clipping:
+        sys.exit(f"BonkArmed: scimitars cut through her body as she gets up ({clipping} points)")
+    add("BonkArmed", bonk_armed, "the same, scimitars in hand, blades clear of her as she gets up", bonk_swords)
     reflections = choose_reflections(nb_limbs, nb_walk.table)
     add("FlipBare", make_bare_flip(tables["gPlayAsNabooruFlipAnim"], soft[5], relaxed[0], nb_limbs, reflections),
         "backflip landing relaxed, for empty hands")
