@@ -132,6 +132,9 @@ RUN_ARM_SWING_GAIN = (1.4, 1.2, 1.0)
 NB_TORSO, NB_HEAD = 7, 14
 NB_BLANK = 15
 RUN_CORE_SWAY_GAIN = {NB_TORSO: 2.3, NB_HEAD: 1.0}
+# With scimitars in hand her shoulders twist and roll much less (they swung the blades about): half the twist, a third
+# of the roll.
+ARMED_RUN_CORE_SWAY_GAIN = {NB_TORSO: 0.8, NB_HEAD: 1.0}
 
 RESOURCE_HEADER = bytes.fromhex("00000000" "4d4e414f" "00000000" "efbeaddeefbeadde") + bytes(64 - 20)
 TEXTURE_HEADER = bytes.fromhex("00000000" "5845544f" "00000000" "efbeaddeefbeadde") + bytes(64 - 20)
@@ -273,11 +276,23 @@ def overlay_walk_motion(run_table, nb_limbs, walk_table, limb_gains, keep_run_po
     return out
 
 
-def arms_from_walk(run_table, nb_limbs, walk_table):
-    """Arms swing like her walk (exaggerated); torso and head get her walk's twist/sway on top of the run's lean."""
+def arms_from_walk(run_table, nb_limbs, walk_table, core_gain=None):
+    """Arms swing like her walk (exaggerated); torso and head get her walk's twist/sway (by `core_gain`, default
+    RUN_CORE_SWAY_GAIN) on top of the run's lean."""
     arms = {limb: gain for side in (NB_L_ARM, NB_R_ARM) for limb, gain in zip(side, RUN_ARM_SWING_GAIN)}
     out = overlay_walk_motion(run_table, nb_limbs, walk_table, arms, keep_run_pose=False)
-    return overlay_walk_motion(out, nb_limbs, walk_table, RUN_CORE_SWAY_GAIN, keep_run_pose=True)
+    return overlay_walk_motion(out, nb_limbs, walk_table, core_gain or RUN_CORE_SWAY_GAIN, keep_run_pose=True)
+
+
+def shoulder_sway(nb_limbs, table):
+    """How far her shoulder line turns (yaw) and tilts (roll) over a cycle, in degrees."""
+    yaw, roll = [], []
+    for f in table:
+        _, P = fk(nb_limbs, f)
+        d = P[NB_L_ARM[0]] - P[NB_R_ARM[0]]
+        yaw.append(math.degrees(math.atan2(-d[2], d[0])))
+        roll.append(math.degrees(math.atan2(d[1], d[0])))
+    return max(yaw) - min(yaw), max(roll) - min(roll)
 
 
 def sword_table(src_anim):
@@ -1057,6 +1072,7 @@ def main():
     resources = {}
     tables = {}
     sword_tables = {}
+    retargeted = {}  # before her own arm swing and sway
     for job in JOBS:
         src = job.source
         if src.obj not in src_limbs:
@@ -1064,6 +1080,7 @@ def main():
         limbs = src_limbs[src.obj]
         anim = parse_anim(src.obj, job.anim, len(limbs))
         table = retarget(src, anim, nb_walk.table[0])
+        retargeted[job.out] = table
         skip = ()
         if job.arms_from_walk:
             table = arms_from_walk(table, nb_limbs, nb_walk.table)
@@ -1126,7 +1143,10 @@ def main():
 
     # moving with scimitars out: her own walk/run arm swing (less of it running), wrists turned to keep the blades off
     # her body
-    armed_run = damp_swing(run, NB_L_ARM + NB_R_ARM, ARMED_RUN_SWING)
+    armed_run = damp_swing(arms_from_walk(retargeted["gPlayAsNabooruRunAnim"], nb_limbs, nb_walk.table,
+                                          ARMED_RUN_CORE_SWAY_GAIN), NB_L_ARM + NB_R_ARM, ARMED_RUN_SWING)
+    print("shoulder twist/roll over a stride: run %.0f/%.0f degrees, armed run %.0f/%.0f"
+          % (*shoulder_sway(nb_limbs, run), *shoulder_sway(nb_limbs, armed_run)))
     armed = {"ArmedIdle": armed_idle, "ArmedTired": armed_tired,
              "ArmedWalk": np.array([hold_blades(f, nb_limbs, HOLD_WALK) for f in nb_walk.table]),
              "ArmedRun": np.array([hold_blades(f, nb_limbs, HOLD_RUN) for f in armed_run]),
