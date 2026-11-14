@@ -35,6 +35,7 @@ extern "C" {
 #include "objects/object_geldb/object_geldb.h"
 #include "overlays/actors/ovl_En_Nb/z_en_nb.h"
 #include "overlays/actors/ovl_En_M_Thunder/z_en_m_thunder.h"
+#include "align_asset_macro.h"
 extern PlayState* gPlayState;
 void ResourceMgr_UnregisterSkeleton(SkelAnime* skelAnime);
 }
@@ -43,6 +44,7 @@ void ResourceMgr_UnregisterSkeleton(SkelAnime* skelAnime);
 #define CVAR_PLAY_AS_NABOORU_VALUE CVarGetInteger(CVAR_PLAY_AS_NABOORU_NAME, 0)
 
 static void PlayAsNabooru_DrawModel();
+static void PlayAsNabooru_DrawChargeGlow(PlayState* play, EnMThunder* charge, u8 alpha, f32 thickness);
 
 namespace {
 
@@ -894,7 +896,10 @@ void KeepFeetDown(Player* player) {
     }
 }
 
+void RestoreSpinCharge();
+
 void Nabooru_OnPlayerUpdate() {
+    RestoreSpinCharge();
     Player* player = GET_PLAYER(gPlayState);
     if (player == nullptr) {
         return;
@@ -1346,16 +1351,113 @@ bool GetSwordRotation(bool leftHand, Vec3s* rot) {
 }
 
 // Charging a spin attack, Link's sword glows (En_M_Thunder) and sparkles converge on it (Eff_Dust); both are drawn in
-// his sword hand's matrix (Player::mf_9E0), where his blade runs along +X from (0, 400, 0). Hers: from the hilt at
-// kBladeHilt of the scimitar limb, curving away along -Y; the glow follows the chord through the middle of the blade,
-// scaled from the length of Link's sword to hers.
+// his sword hand's matrix (Player::mf_9E0), where his blade runs along +X from (0, 400, 0). The sparkles go to her
+// left scimitar: from the hilt at kBladeHilt of the scimitar limb along the chord of the curved blade (-Y), scaled
+// from the length of Link's sword to hers. The glow, a straight tube, is drawn by her instead, bent along both blades.
 constexpr Vec3f kBladeHilt = { 480.0f, -250.0f, 0.0f };
 constexpr f32 kBladeAngle = -1.847f; // radians about Z from +X to the chord
 constexpr f32 kBladeLength = 3300.0f;
 constexpr f32 kLinkBladeY = 400.0f;
 constexpr f32 kLinkBladeLengths[] = { 4000.0f, 3000.0f, 5500.0f }; // by En_M_Thunder's sword type: Master, Kokiri, BGS
-MtxF sBladeMtx[2]; // her scimitars (left, right hand) at the hilt, along the chord: recorded as she is drawn
+MtxF sBladeMtx[2];    // her scimitars (left, right hand) at the hilt, along the chord...
+MtxF sScimitarMtx[2]; // ...and the scimitar limbs themselves: recorded as she is drawn
 bool sBladeDrawn[2];
+EnMThunder* sHiddenCharge = nullptr; // the charge whose own (straight) glow is hidden for its draw, and its alpha
+u8 sHiddenChargeAlpha = 0;
+
+// The glow along a scimitar: En_M_Thunder's charge glow, a six-sided tube narrowing from the hilt end to the tip end
+// (a ring of corners at each), rebuilt with kGlowRings rings along the curve of her blade.
+constexpr s32 kGlowRings = 11;
+constexpr s32 kGlowCorners = 7; // six, the first again where the texture wraps around
+// the curve: from her hand through the middle of the blade to its tip (scimitar limb X, Y; the blade lies at
+// Z = -kBladeZ for her left one, +kBladeZ for her right one)
+constexpr f32 kGlowCurve[][2] = { { 380, 100 },   { 390, -300 },  { 400, -482 }, { 626, -1465 },
+                                  { 428, -2462 }, { -67, -2984 }, { -882, -3350 } };
+constexpr f32 kBladeZ = 110.0f;
+// the original's corners at the hilt end and the tip end (its Y, Z and texture S), texture T at each end
+struct GlowCorner {
+    f32 y, z, s;
+};
+constexpr GlowCorner kGlowHiltEnd[kGlowCorners] = { { 0, -480, 512 }, { -312, -240, 643 }, { -312, 240, 893 },
+                                                    { 0, 480, 1024 }, { 0, 480, 0 },       { 312, 240, 131 },
+                                                    { 312, -240, 381 } };
+constexpr GlowCorner kGlowTipEnd[kGlowCorners] = { { 0, -307, 512 }, { -175, -154, 632 }, { -175, 154, 904 },
+                                                   { 0, 307, 1024 }, { 0, 307, 0 },       { 175, 154, 120 },
+                                                   { 175, -154, 392 } };
+constexpr f32 kGlowHiltT = 2054.0f, kGlowTipT = -30.0f;
+// En_M_Thunder (Master Sword): the tube is turned 16384 radians about its length and its cross-section scaled thus
+constexpr f32 kGlowTurn = 16384.0f;
+constexpr f32 kGlowAcross = -1.0f, kGlowOut = -0.7f; // in the blade's plane, out of it
+constexpr f32 kGlowPulse[] = { 0.1f, 0.15f, 0.2f, 0.25f, 0.3f, 0.25f, 0.2f, 0.15f };
+
+struct GlowRing {
+    f32 x, y;   // on the curve
+    f32 nx, ny; // across the blade
+    f32 u;      // 0 at the hilt end, 1 at the tip
+};
+
+// kGlowRings points spread evenly along a smooth curve (Catmull-Rom) through kGlowCurve
+const GlowRing* GlowRings() {
+    static GlowRing sRings[kGlowRings];
+    static bool sDone = false;
+    if (sDone) {
+        return sRings;
+    }
+    constexpr s32 kPoints = ARRAY_COUNT(kGlowCurve), kSteps = 32, kSamples = (kPoints - 1) * kSteps + 1;
+    f32 px[kSamples], py[kSamples], length[kSamples];
+    for (s32 i = 0; i < kSamples; i++) {
+        s32 seg = MIN(i / kSteps, kPoints - 2);
+        f32 t = (f32)(i - seg * kSteps) / kSteps;
+        const f32* p0 = kGlowCurve[MAX(seg - 1, 0)];
+        const f32* p1 = kGlowCurve[seg];
+        const f32* p2 = kGlowCurve[seg + 1];
+        const f32* p3 = kGlowCurve[MIN(seg + 2, kPoints - 1)];
+        f32 out[2];
+        for (s32 c = 0; c < 2; c++) {
+            out[c] = 0.5f * (2 * p1[c] + (p2[c] - p0[c]) * t + (2 * p0[c] - 5 * p1[c] + 4 * p2[c] - p3[c]) * t * t +
+                             (3 * p1[c] - p0[c] - 3 * p2[c] + p3[c]) * t * t * t);
+        }
+        px[i] = out[0];
+        py[i] = out[1];
+        length[i] = (i == 0) ? 0.0f : length[i - 1] + sqrtf(SQ(px[i] - px[i - 1]) + SQ(py[i] - py[i - 1]));
+    }
+    s32 j = 0;
+    for (s32 r = 0; r < kGlowRings; r++) {
+        f32 at = length[kSamples - 1] * r / (kGlowRings - 1);
+        while (j < kSamples - 2 && length[j + 1] < at) {
+            j++;
+        }
+        f32 f = CLAMP((at - length[j]) / MAX(length[j + 1] - length[j], 1e-3f), 0.0f, 1.0f);
+        f32 tx = px[j + 1] - px[j], ty = py[j + 1] - py[j], tl = sqrtf(tx * tx + ty * ty);
+        sRings[r] = { px[j] + tx * f, py[j] + ty * f, -ty / tl, tx / tl, (f32)r / (kGlowRings - 1) };
+    }
+    sDone = true;
+    return sRings;
+}
+
+// The glow's vertices along one blade for this frame (its thickness pulses).
+void BuildChargeGlow(Vtx* vtx, bool left, f32 thickness) {
+    const GlowRing* rings = GlowRings();
+    f32 c = cosf(kGlowTurn), s = sinf(kGlowTurn);
+    for (s32 r = 0; r < kGlowRings; r++) {
+        const GlowRing& ring = rings[r];
+        for (s32 k = 0; k < kGlowCorners; k++) {
+            const GlowCorner& a = kGlowHiltEnd[k];
+            const GlowCorner& b = kGlowTipEnd[k];
+            f32 y = a.y + (b.y - a.y) * ring.u, z = a.z + (b.z - a.z) * ring.u;
+            f32 across = (c * y - s * z) * kGlowAcross * thickness;
+            f32 out = (s * y + c * z) * kGlowOut * thickness;
+            Vtx_t* v = &vtx[r * kGlowCorners + k].v;
+            v->ob[0] = (s16)(ring.x + ring.nx * across);
+            v->ob[1] = (s16)(ring.y + ring.ny * across);
+            v->ob[2] = (s16)((left ? -kBladeZ : kBladeZ) + out);
+            v->flag = 0;
+            v->tc[0] = (s16)(a.s + (b.s - a.s) * ring.u);
+            v->tc[1] = (s16)(kGlowHiltT + (kGlowTipT - kGlowHiltT) * ring.u);
+            v->cn[0] = v->cn[1] = v->cn[2] = v->cn[3] = 255;
+        }
+    }
+}
 
 EnMThunder* FindSpinCharge() {
     for (Actor* actor = gPlayState->actorCtx.actorLists[ACTORCAT_ITEMACTION].head; actor != nullptr;
@@ -1367,8 +1469,16 @@ EnMThunder* FindSpinCharge() {
     return nullptr;
 }
 
-// Moves Link's sword hand matrix onto her left scimitar while a spin attack is charged or released (the glow and the
-// sparkles, drawn after her, follow it), and draws a second glow along her right one.
+// Before the charge updates: give it back the alpha its glow had (only its draw saw it hidden).
+void RestoreSpinCharge() {
+    if (sHiddenCharge != nullptr && gPlayState != nullptr && FindSpinCharge() == sHiddenCharge) {
+        sHiddenCharge->chargeAlpha = sHiddenChargeAlpha;
+    }
+    sHiddenCharge = nullptr;
+}
+
+// While a spin attack is charged or released: the glow bent along both her scimitars (the charge's own straight one,
+// drawn after her, made invisible), the sparkles converging on her left one.
 void ChargeAlongScimitars() {
     Player* player = GET_PLAYER(gPlayState);
     EnMThunder* charge = FindSpinCharge();
@@ -1376,28 +1486,22 @@ void ChargeAlongScimitars() {
         return;
     }
     f32 scale = kBladeLength / kLinkBladeLengths[MIN(charge->swordType, ARRAY_COUNT(kLinkBladeLengths) - 1)];
-    MtxF blades[2];
-    for (s32 i = 0; i < 2; i++) {
-        Matrix_Push();
-        Matrix_Put(&sBladeMtx[i]);
-        Matrix_Scale(scale, scale, scale, MTXMODE_APPLY);
-        Matrix_Translate(0.0f, -kLinkBladeY, 0.0f, MTXMODE_APPLY);
-        Matrix_Get(&blades[i]);
-        Matrix_Pop();
+    Matrix_Push();
+    Matrix_Put(&sBladeMtx[0]);
+    Matrix_Scale(scale, scale, scale, MTXMODE_APPLY);
+    Matrix_Translate(0.0f, -kLinkBladeY, 0.0f, MTXMODE_APPLY);
+    Matrix_Get(&player->mf_9E0);
+    Matrix_Pop();
+    if (sHiddenCharge != charge) { // (drawn again without an update, e.g. paused: it's still hidden)
+        sHiddenCharge = charge;
+        sHiddenChargeAlpha = charge->chargeAlpha;
     }
-    if (charge->actor.draw != nullptr && charge->chargeAlpha > 0) {
-        // (with an attack strength it doesn't have, it draws the glow without the spin's trail)
-        u8 strength = charge->attackStrength;
-        charge->attackStrength = 2;
-        player->mf_9E0 = blades[1];
-        Matrix_Push();
-        FrameInterpolation_RecordOpenChild(&sBladeMtx[1], 0);
-        charge->actor.draw(&charge->actor, gPlayState);
-        FrameInterpolation_RecordCloseChild();
-        Matrix_Pop();
-        charge->attackStrength = strength;
+    charge->chargeAlpha = 0;
+    if (sHiddenChargeAlpha > 0) {
+        f32 pulse = kGlowPulse[gPlayState->gameplayFrames & 7];
+        f32 thickness = scale * ((charge->spinChargePercent >= 0.85f) ? pulse * 6.0f + 1.0f : pulse * 2.0f + 1.0f);
+        ::PlayAsNabooru_DrawChargeGlow(gPlayState, charge, sHiddenChargeAlpha, thickness);
     }
-    player->mf_9E0 = blades[0];
 }
 
 } // namespace
@@ -1468,7 +1572,8 @@ static void PlayAsNabooru_DrawSword(PlayState* play, bool leftHand) {
     OPEN_DISPS(play->state.gfxCtx);
     Matrix_Push();
     Matrix_RotateZYX(rot.x, rot.y, rot.z, MTXMODE_APPLY);
-    Matrix_Push(); // where a spin attack's charge goes
+    Matrix_Get(&sScimitarMtx[leftHand ? 0 : 1]);
+    Matrix_Push(); // where a spin attack's sparkles go
     Matrix_Translate(kBladeHilt.x, kBladeHilt.y, kBladeHilt.z, MTXMODE_APPLY);
     Matrix_RotateZ(kBladeAngle, MTXMODE_APPLY);
     Matrix_Get(&sBladeMtx[leftHand ? 0 : 1]);
@@ -1479,6 +1584,63 @@ static void PlayAsNabooru_DrawSword(PlayState* play, bool leftHand) {
                                                     : gGerudoRedSkelLimbsLimb_00A360DL_0097D0));
     Matrix_Pop();
     CLOSE_DISPS(play->state.gfxCtx);
+}
+
+// A spin attack's charge glow along both scimitars (see ChargeAlongScimitars), drawn as En_M_Thunder draws its own:
+// with its display list, for the material (its textures are only known to the display list). That calls segment 9
+// (the texture scroll) just before drawing its straight tube: there go her bent tube, then a transparent colour for
+// the straight one.
+static void PlayAsNabooru_DrawChargeGlow(PlayState* play, EnMThunder* charge, u8 alpha, f32 thickness) {
+    static const ALIGN_ASSET(2) char kChargeDL[] = "__OTR__objects/gameplay_keep/gSpinAttackChargingDL";
+    GraphicsContext* gfxCtx = play->state.gfxCtx;
+    bool full = charge->spinChargePercent >= 0.85f;
+    // (as the cosmetics editor may have them)
+    Color_RGB8 prim = full ? Color_RGB8{ 255, 255, 170 } : Color_RGB8{ 170, 255, 255 };
+    Color_RGB8 env = full ? Color_RGB8{ 255, 100, 0 } : Color_RGB8{ 0, 100, 255 };
+    std::string cvar = std::string(CVAR_COSMETIC("SpinAttack.")) + (full ? "Level2" : "Level1");
+    if (CVarGetInteger((cvar + "Primary.Changed").c_str(), 0)) {
+        prim = CVarGetColor24((cvar + "Primary.Value").c_str(), prim);
+    }
+    if (CVarGetInteger((cvar + "Secondary.Changed").c_str(), 0)) {
+        env = CVarGetColor24((cvar + "Secondary.Value").c_str(), env);
+    }
+    u32 frames = play->gameplayFrames;
+    s32 spin = full ? 0x28 : 0x14;
+
+    OPEN_DISPS(gfxCtx);
+    Gfx_SetupDL_25Xlu(gfxCtx);
+    Gfx* scroll = Gfx_TwoTexScrollEx(gfxCtx, 0, (frames * 5) & 0xFF, 0, 0x20, 0x20, 1, (frames * 20) & 0xFF,
+                                     (frames * spin) & 0xFF, 8, 8, 5, 0, 20, spin);
+    for (s32 i = 0; i < 2; i++) {
+        Vtx* vtx = (Vtx*)Graph_Alloc(gfxCtx, sizeof(Vtx) * kGlowRings * kGlowCorners);
+        BuildChargeGlow(vtx, i == 0, thickness);
+        Gfx* tube = (Gfx*)Graph_Alloc(gfxCtx, sizeof(Gfx) * (3 + (kGlowRings - 1) * kGlowCorners));
+        Gfx* g = tube;
+        gSPDisplayList(g++, scroll);
+        for (s32 r = 0; r + 1 < kGlowRings; r++) {
+            // two rings at a time, corners 0-6 and 7-13: six sides (corners 3 and 4 are the texture's seam)
+            gSPVertex(g++, (uintptr_t)&vtx[r * kGlowCorners], 2 * kGlowCorners, 0);
+            for (s32 k = 0; k < kGlowCorners; k++) {
+                if (k == 3) {
+                    continue;
+                }
+                s32 next = (k + 1) % kGlowCorners;
+                gSP2Triangles(g++, next, next + kGlowCorners, k + kGlowCorners, 0, next, k + kGlowCorners, k, 0);
+            }
+        }
+        gDPSetPrimColor(g++, 0, 0x80, prim.r, prim.g, prim.b, 0);
+        gSPEndDisplayList(g++);
+
+        Matrix_Push();
+        Matrix_Put(&sScimitarMtx[i]);
+        gSPMatrix(POLY_XLU_DISP++, MATRIX_NEWMTX(gfxCtx), G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_MODELVIEW);
+        Matrix_Pop();
+        gDPSetPrimColor(POLY_XLU_DISP++, 0, 0x80, prim.r, prim.g, prim.b, alpha);
+        gDPSetEnvColor(POLY_XLU_DISP++, env.r, env.g, env.b, 128);
+        gSPSegment(POLY_XLU_DISP++, 0x09, (uintptr_t)tube);
+        gSPDisplayList(POLY_XLU_DISP++, (Gfx*)kChargeDL);
+    }
+    CLOSE_DISPS(gfxCtx);
 }
 
 // Records her ankles as the player's feet, so the foot shadows (drawn right after the player) follow her, not
