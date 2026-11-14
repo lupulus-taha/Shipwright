@@ -715,6 +715,23 @@ f32 Cadence(f32 speed, f32 reference) {
     return cadence;
 }
 
+// Setting off, Link's run animation leans him into it for 2 frames before he moves at all; then he speeds up by 2
+// units a frame and is in full stride on his 4th frame. She sets off with him, and straight into her run when the stick
+// asks for one (from a stick magnitude of about 55 of 60 his target speed is a run), instead of walking first.
+constexpr f32 kMoveStick = 20.0f; // below this the stick doesn't move Link
+constexpr f32 kRunStick = 55.0f;
+
+f32 StickMagnitude() {
+    const Input* input = &gPlayState->state.input[0];
+    return MIN(sqrtf(SQ((f32)input->rel.stick_x) + SQ((f32)input->rel.stick_y)), 60.0f);
+}
+
+bool LinkSettingOff(Player* player) {
+    const char* name = LinkAnimName(player->skelAnime.animation);
+    return name != nullptr && strstr(name, "_run") != nullptr && strstr(name, "jump") == nullptr &&
+           player->actor.speedXZ <= kRunThreshold && !IsTargeting(player) && StickMagnitude() >= kMoveStick;
+}
+
 // Locomotion when no rule matches. Returns the move and its loop speed; `legsOnly` asks for her normal upper body
 // (used when walking sideways without her scimitars, so she doesn't hold a fighting pose with empty hands).
 const Move* LocomotionMove(Player* player, f32* loopSpeed, bool* legsOnly) {
@@ -722,7 +739,8 @@ const Move* LocomotionMove(Player* player, f32* loopSpeed, bool* legsOnly) {
     *legsOnly = false;
     *loopSpeed = 1.0f;
     sStride = 1.0f;
-    if (speed <= kMovingThreshold) {
+    bool settingOff = LinkSettingOff(player);
+    if (speed <= kMovingThreshold && !settingOff) {
         if (player->stateFlags1 & PLAYER_STATE1_TALKING) {
             return &kHips;
         }
@@ -740,7 +758,7 @@ const Move* LocomotionMove(Player* player, f32* loopSpeed, bool* legsOnly) {
     }
     switch (dir) {
         case Dir::Forward:
-            if (speed > kRunThreshold && HasResource(kRun.anim)) {
+            if ((speed > kRunThreshold || (settingOff && StickMagnitude() >= kRunStick)) && HasResource(kRun.anim)) {
                 *loopSpeed = CLAMP(speed / kRunReferenceSpeed, 0.75f, 3.0f);
                 return &kRun;
             }
@@ -1039,6 +1057,10 @@ void Nabooru_OnPlayerUpdate() {
         HasResource(kStance.anim)) {
         body = &kLandShortStance;
     }
+    if (body == &kLandDrop && sShowSwords && IsTargeting(player) && HasResource(kLandDropStance.anim) &&
+        HasResource(kStance.anim)) {
+        body = &kLandDropStance;
+    }
 
     // Landing after a long drop while moving on (Link rolls): a quick dip into her walk/run. (After shorter drops she
     // lands as from a hop, giving way to her walk/run if she moves on.)
@@ -1057,10 +1079,6 @@ void Nabooru_OnPlayerUpdate() {
         body = &kLandQuick;
     } else if (body != &kLandQuick) {
         sLandingFrames = 0;
-    }
-    if (body == &kLandDrop && sShowSwords && IsTargeting(player) && HasResource(kLandDropStance.anim) &&
-        HasResource(kStance.anim)) {
-        body = &kLandDropStance;
     }
 
     f32 stride = 1.0f;
@@ -1086,7 +1104,7 @@ void Nabooru_OnPlayerUpdate() {
         }
         // Setting off from her folded-arms idle, her arms stay folded for a moment: a light tap of the stick doesn't
         // swing them about.
-        if (moving && !shielding && !sShowSwords && HasResource(kCrossedArms.anim)) {
+        if ((moving || LinkSettingOff(player)) && !shielding && !sShowSwords && HasResource(kCrossedArms.anim)) {
             if (sBody.move == &kCrossedArms || (sBody.move == &kFoldArms && OnceDone(sBody))) {
                 sKeepFolded = kKeepFoldedFrames;
                 startFolded = true;
