@@ -70,7 +70,8 @@ struct Move {
     f32 swordsFrame = -1.0f;        // >= 0: hold this frame of `swords` instead of following the body's frame
     const char* bareAnim = nullptr; // the same move for empty hands (same frame count), if it differs
     // Sync over part of Link's animation: from his frame `linkFrom` to `linkTo` (-1: his last frame), after which
-    // `next` takes over. Moves without these follow all of it (or the first `span`).
+    // `next` takes over, or without one her own idle (Link may stand still a while before his animation ends). Moves
+    // without these follow all of it (or the first `span`).
     f32 linkFrom = 0.0f;
     f32 linkTo = -1.0f;
     const Move* next = nullptr;
@@ -212,7 +213,8 @@ const Move kDown = { "Down", GEN(Defeat), GEN_SWORDS(Defeat), Mode::Sync, 12, 22
 const Move kGetUp = { "GetUp", GEN(Crouch), nullptr, Mode::Sync, 10, 0 };
 // Rolling into a wall, Link bounces back onto his backside, sits a moment and gets up, all in one animation. Hers
 // (generated) falls back onto her backside (the end of the fighter's defeat), bounces and settles, then rises through
-// the guard's kneel into her idle; each part follows his.
+// the guard's kneel into her idle; each part follows his. He then stands still for a few frames: she goes on into her
+// idle at once.
 const Move kBonkUp = { .name = "BonkUp",
                        .anim = GEN(BonkArmed),
                        .swords = GEN_SWORDS(BonkArmed),
@@ -937,6 +939,9 @@ void Nabooru_OnPlayerUpdate() {
     const Move* body = MatchRule(link->animation);
     while (body != nullptr && body->next != nullptr && link->curFrame >= LinkTo(body, player)) {
         body = body->next; // the next part of Link's animation
+    }
+    if (body != nullptr && body->next == nullptr && body->linkTo >= 0.0f && link->curFrame > body->linkTo) {
+        body = nullptr; // done before Link: on to her idle (e.g. folding her arms) rather than holding still
     }
     const Move* overlay = nullptr;
     f32 bodySpeed = 1.0f, overlaySpeed = 1.0f;
