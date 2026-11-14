@@ -935,25 +935,32 @@ def make_soft_landing(jump, rest):
 
 
 LOW_LANDING_LEGS = 0.5  # how much of the landing's knee bend to take out
-LIGHT_LANDING_LEGS = 0.8  # after a short drop (up to 80 units): a light dip, a fifth of the landing's knee bend
+# After a short drop (up to 80 units) her knees cushion it (30% of the landing's knee bend) and her upper body stays
+# almost upright (it keeps this much of its orientation standing).
+LIGHT_LANDING_LEGS = 0.7
+LIGHT_LANDING_UPRIGHT = 0.8
 NB_LEG_JOINTS = (0, 1, 2, 3, 4, 5, 6, 18)  # table rows: root translation and rotation, legs, waist
 
 
 LANDING_ARMS_FRAMES = 8  # empty-handed, her arms settle from the in-air pose to her sides over these frames
 
 
-def make_low_landing(jump, rest, clearance=None, arms_from=None, stiff=LOW_LANDING_LEGS):
-    """The fighter's landing with `stiff` of her knee bend taken out (about half by default); her arms and upper body ease into `rest`
-    over the second half instead of rising into her fighting stance. With `clearance` (she holds scimitars), any
+def make_low_landing(jump, rest, clearance=None, arms_from=None, stiff=LOW_LANDING_LEGS, nb_limbs=None, upright=0.0):
+    """The fighter's landing with `stiff` of her knee bend taken out (about half by default); her arms and upper body
+    ease into `rest` over the second half instead of rising into her fighting stance. With `upright` (and `nb_limbs`)
+    her torso keeps that much of its orientation in `rest`, instead of bending forward over her knees. With `clearance` (she holds scimitars), any
     frame where a blade would cut her takes more of `rest`'s upper body, until it doesn't. With `arms_from` (her pose
     in the air), her arms come down from it to `rest`'s instead of following the fighter's, which fling out wide."""
     out = []
+    W_rest = fk(nb_limbs, rest)[0] if upright else None
     for f in range(len(jump)):
         settle = min(max((f - 8) / (len(jump) - 9), 0.0), 1.0)
         legs = blend_frames(jump[f], rest, stiff + (1 - stiff) * settle)
         for upper in np.arange(settle, 1.0001, 0.1):
             frame = blend_frames(jump[f], rest, min(upper, 1.0))
             frame[list(NB_LEG_JOINTS)] = legs[list(NB_LEG_JOINTS)]
+            if upright:
+                steady_limb(frame, nb_limbs, NB_TORSO, W_rest[NB_TORSO], upright)
             if clearance is None or clearance.count(frame) == 0:
                 break
         if arms_from is not None:
@@ -1294,11 +1301,11 @@ def main():
     # Z-targeting with scimitars (side hops): settling into her fighting stance, which comes next
     armed["LandLowStance"] = make_low_landing(jump, tables["gPlayAsNabooruNeutralAnim"][0], clearance)
     # after a short drop: the same, only a light dip
-    add("LandLight", make_low_landing(jump, relaxed[0], arms_from=air[0], stiff=LIGHT_LANDING_LEGS),
+    light = dict(stiff=LIGHT_LANDING_LEGS, nb_limbs=nb_limbs, upright=LIGHT_LANDING_UPRIGHT)
+    add("LandLight", make_low_landing(jump, relaxed[0], arms_from=air[0], **light),
         "landing from a short drop: a light dip, arms coming down from the air, settling relaxed")
-    armed["LandLightArmed"] = make_low_landing(jump, armed_idle[0], clearance, stiff=LIGHT_LANDING_LEGS)
-    armed["LandLightStance"] = make_low_landing(jump, tables["gPlayAsNabooruNeutralAnim"][0], clearance,
-                                               stiff=LIGHT_LANDING_LEGS)
+    armed["LandLightArmed"] = make_low_landing(jump, armed_idle[0], clearance, **light)
+    armed["LandLightStance"] = make_low_landing(jump, tables["gPlayAsNabooruNeutralAnim"][0], clearance, **light)
     defeat, kneel = tables["gPlayAsNabooruDefeatAnim"], tables["gPlayAsNabooruCrouchAnim"]
     add("Bonk", make_bonk(defeat, kneel, relaxed[0]), "rolled into a wall: falls back, sits, gets up relaxed")
     bonk_armed, bonk_swords = make_bonk(defeat, kneel, armed_idle[0], sword_tables["gPlayAsNabooruDefeatAnim"],
