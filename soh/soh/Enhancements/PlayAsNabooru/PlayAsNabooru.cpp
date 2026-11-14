@@ -944,7 +944,9 @@ void KeepFeetDown(Player* player) {
         sHop = sBody.move;
         sHopFloorY = player->actor.world.pos.y; // (he only moves on the next frame)
     }
-    if (player->skelAnime.curFrame <= kSideHopGroundFrames && player->actor.scale.y > 0.0f) {
+    const char* name = LinkAnimName(player->skelAnime.animation); // (not while she holds the hop as he falls on)
+    if (name != nullptr && strstr(name, "side_jump") != nullptr && player->skelAnime.curFrame <= kSideHopGroundFrames &&
+        player->actor.scale.y > 0.0f) {
         f32 risen = (player->actor.world.pos.y - sHopFloorY) / player->actor.scale.y; // model units
         sFinalJoints[0].y -= (s16)CLAMP(risen, 0.0f, 2000.0f);
     }
@@ -1010,8 +1012,10 @@ void Nabooru_OnPlayerUpdate() {
     if (YieldsToLocomotion(body) && sLinkStalledFrames >= 2 && moving) {
         body = nullptr;
     }
-    if (body == &kAirborne && (sBody.move == &kBackflip || sBody.move == &kJumpSlashAir)) {
-        // Link briefly plays his fall between a flip and its landing: finish the flip instead
+    if (body == &kAirborne && (sBody.move == &kBackflip || sBody.move == &kJumpSlashAir || sBody.move == &kSideHopR ||
+                               sBody.move == &kSideHopL)) {
+        // Link briefly plays his fall between a flip and its landing (or a side hop and its landing, when the ground
+        // falls away): finish the flip, hold the hop's last frame in the air instead
         body = sBody.move;
         freezeBody = true;
     } else if (body == &kAirborne && grounded && IsLinkTouchdown(link->animation)) {
