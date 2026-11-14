@@ -9,12 +9,12 @@ in-game footage of both, filmed with the same inputs and camera (tests `survey2`
 | Move | Link | Nabooru before | Now | Principles |
 |---|---|---|---|---|
 | Side hop (Z + A sideways) | Hips lead 10 units into the hop; feet trail 3-12 units behind; hips turned away from the hop, shoulders less; arms on the side he came from; narrower in the air (23 → 16 units wide) | Upright and straight over spread legs, arms out wide, wider in the air (20 → 34 units) | Arc: the trailing toes stay where she took off while her hips go over; legs tucked and trailing; hips turned away; arms on the takeoff side; the leading foot plants where it will stand and she slides on over it into the landing (one animation, no crossfade) | Arcs, squash & stretch, follow-through, staging |
-| Running off a ledge | Leap: push-off leaning in, legs split, arms swinging against them | Blended into the knees-up air pose and held it | Generated leap synced to his `normal_run_jump`, gathering into the air pose for the fall | Anticipation, arcs, exaggeration |
-| Drops of 80 units or less, standing | `short_landing`: sinks to 61° knees for 11 frames | No landing: straight-legged touchdown, then folded her arms | Her hop landing (knees half bent, settling); into her stance when armed and targeting | Squash & stretch, follow-through |
+| Running off a ledge | Leap: push-off leaning in, then a running stride in the air (knees bent), arms swinging against the legs | Blended into the knees-up air pose and held it | Follows his `normal_run_jump` frame by frame (her limbs point where his do). A first hand-keyed version (straight-legged split) looked silly | Anticipation, arcs, exaggeration |
+| Drops of 80 units or less, standing | `short_landing`: sinks to 61° knees for 11 frames | No landing: straight-legged touchdown, then folded her arms | A light dip (hips sink 4 units) over his first 6 frames, then her idle. Her full hop landing was too emphatic | Squash & stretch, follow-through |
 
 ## Smaller cases, for you to decide
 
-Roughly by how often they show in play.
+Roughly by how often they show in play. Your answers (2026-11-14): 1 done (full stride on frame 4), 2 doesn't matter, 3 comparison GIF in `~/oot-fast64/tests/gifs/hits_from_behind.gif`, 4-6 not worth it yet. 7: fine on slopes; her legs changing pose while she hung in the air after hopping down a slope is fixed (she holds the hop's last frame).
 
 1. **Run start is late and stiff** (timing, anticipation). Link leans into his run for 2 frames while his speed is still 0. She stays in her idle for those frames, then crossfades idle → walk → run (5 frames each). Her full stride arrives around frame 9; Link's arrives at frame 4.
    - *Fix:* start her locomotion as soon as Link's run animation plays, with a faster crossfade from idle. The 3 frames of folded arms can stay as they are.
