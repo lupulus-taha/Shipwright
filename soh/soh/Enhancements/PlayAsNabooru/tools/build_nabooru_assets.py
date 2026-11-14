@@ -451,6 +451,117 @@ def make_air(relaxed_frame, walk_mean, nb_limbs, arm_out, elbow, hips, knees, le
     return f[None]
 
 
+NB_L_LEG, NB_R_LEG = (1, 2, 3), (4, 5, 6)  # thigh, shin, foot
+
+
+def solve_leg(frame, nb_limbs, leg, ankle):
+    """Two-bone IK: the knee bent and the thigh turned so the leg's ankle reaches `ankle` (model space, as close as
+    the leg allows), the foot keeping its orientation in model space."""
+    thigh, shin, foot = leg
+    f = frame.copy()
+    W, P = fk(nb_limbs, f)
+    foot_world = W[foot]
+    l1, l2 = np.linalg.norm(P[shin] - P[thigh]), np.linalg.norm(P[foot] - P[shin])
+    reach = np.clip(np.linalg.norm(ankle - P[thigh]), abs(l1 - l2) + 1, l1 + l2 - 1)
+    want = math.acos(np.clip((l1 * l1 + l2 * l2 - reach * reach) / (2 * l1 * l2), -1, 1))
+    a, c = P[thigh] - P[shin], P[foot] - P[shin]
+    now = math.acos(np.clip(a @ c / np.linalg.norm(a) / np.linalg.norm(c), -1, 1))
+    rotate_world(f, nb_limbs, shin, np.cross(a, c), math.degrees(want - now))  # (+ opens the knee)
+    W, P = fk(nb_limbs, f)
+    cur, to = P[foot] - P[thigh], ankle - P[thigh]
+    axis = np.cross(cur, to)
+    if np.linalg.norm(axis) > 1e-9:
+        angle = math.acos(np.clip(cur @ to / np.linalg.norm(cur) / np.linalg.norm(to), -1, 1))
+        rotate_world(f, nb_limbs, thigh, axis, math.degrees(angle))
+    W, _ = fk(nb_limbs, f)
+    f[foot + 1] = zyx_from_rot(W[shin].T @ foot_world)
+    return f
+
+
+class FootBoxes:
+    """Her feet's mesh bounding boxes, to put a foot on the ground (its lowest point) rather than its ankle."""
+
+    def __init__(self, nb_limbs):
+        self.limbs = nb_limbs
+        self.corners = {}
+        for foot in (NB_L_LEG[2], NB_R_LEG[2]):
+            v = read_vtx("object_nb", f"{nb_limbs[foot].name[: -len('Limb')]}Vtx")
+            lo, hi = v.min(0), v.max(0)
+            self.corners[foot] = np.array([[x, y, z] for x in (lo[0], hi[0]) for y in (lo[1], hi[1])
+                                           for z in (lo[2], hi[2])])
+
+    def lowest(self, frame, foot):
+        W, P = fk(self.limbs, frame)
+        return float((P[foot] + (W[foot] @ self.corners[foot].T).T)[:, 1].min())
+
+
+def place_foot(frame, nb_limbs, feet, leg, ankle, height, toes):
+    """The leg reaching for `ankle` (model space; its height is then adjusted) with the foot pitched `toes` degrees
+    toes-down, its lowest point at model height `height`."""
+    thigh, shin, foot = leg
+    f = frame.copy()
+    W, _ = fk(nb_limbs, f)
+    toe = W[foot] @ np.array([1.0, 0.0, 0.0])  # the foot points along its +X
+    side = np.cross(np.array([0.0, 1.0, 0.0]), toe)  # pitching about this turns the toes down
+    f[foot + 1] = zyx_from_rot(W[shin].T @ rot_from_quat(np.concatenate(
+        [[math.cos(math.radians(toes) / 2)], side / np.linalg.norm(side) * math.sin(math.radians(toes) / 2)])) @ W[foot])
+    target = np.array(ankle, float)
+    for _ in range(4):  # the ankle's height that puts the lowest point of the foot at `height`
+        f = solve_leg(f, nb_limbs, leg, target)
+        target[1] += height - feet.lowest(f, foot)
+    return f
+
+
+# Side hop (Link's is 6 frames in the air and under 7 units high): a crouch and a push-off from her toes while her
+# feet are still on the ground (the game keeps them there, the player is already rising), then a low skip with her
+# legs apart, reaching for the ground. Per frame of Link's hop, for a hop to her right: Link's height (game units;
+# 0 while her feet are kept down), her hips (model units) and lean towards the hop (degrees), torso bend, each foot's
+# (sideways reach, height of its lowest point above the ground in game units, toes-down pitch) for the leading and
+# trailing leg, and how far her arms have gone from her idle's to her pose in the air (negative: swung back).
+SIDE_HOP = [
+    dict(h=0.0, hips=-450, lean=0, bend=10, lead=(0, 0.0, 0), trail=(0, 0.0, 0), arms=-1.0),  # crouch
+    dict(h=0.0, hips=250, lean=7, bend=4, lead=(0, 0.0, 35), trail=(0, 0.0, 40), arms=0.5),  # push-off, on her toes
+    dict(h=6.0, hips=-250, lean=9, bend=2, lead=(250, 1.6, 25), trail=(-120, 2.4, 35), arms=0.85),
+    dict(h=6.8, hips=-300, lean=7, bend=2, lead=(380, 1.8, 20), trail=(-200, 2.8, 30), arms=1.0),
+    dict(h=6.0, hips=-250, lean=4, bend=2, lead=(420, 1.2, 15), trail=(-150, 2.4, 25), arms=1.0),
+    dict(h=3.8, hips=-250, lean=1, bend=2, lead=(350, 0.4, 5), trail=(-60, 1.6, 15), arms=1.0),
+    dict(h=0.0, hips=-300, lean=0, bend=4, lead=(150, 0.0, 0), trail=(0, 0.6, 10), arms=1.0),  # touching down
+]
+SIDE_HOP_ARMS_BACK = 12  # degrees her arms swing back in the crouch
+SIDE_HOP_LEAD_ARM = 10  # degrees the arm on the side she hops to goes further out
+
+
+def make_side_hop(base, nb_limbs, feet, right, air=None):
+    """A side hop from `base` (her idle, or her fighting stance) to her right or left. With `air` (her pose in the
+    air) her arms swing back, then out to it; without, her upper body keeps `base`'s (her stance's guard)."""
+    side = -1 if right else 1  # model +X is her left
+    lead, trail = (NB_R_LEG, NB_L_LEG) if right else (NB_L_LEG, NB_R_LEG)
+    lead_arm = NB_R_ARM if right else NB_L_ARM
+    ground = {foot: feet.lowest(base, foot) for foot in (NB_L_LEG[2], NB_R_LEG[2])}
+    _, standing = fk(nb_limbs, base)  # where her ankles are
+    out = []
+    for key in SIDE_HOP:
+        f = base.copy()
+        f[0, 1] += key["hips"]
+        rotate_world(f, nb_limbs, 0, Z_AXIS, -side * key["lean"])
+        bend_forward(f, nb_limbs, NB_TORSO, key["bend"])
+        if air is not None:
+            w = key["arms"]
+            if w < 0:
+                for upper in (NB_L_ARM[0], NB_R_ARM[0]):
+                    rotate_world(f, nb_limbs, upper, X_AXIS, -w * SIDE_HOP_ARMS_BACK)
+            else:
+                posed = blend_frames(base, air, w)
+                for limb in NB_L_ARM + NB_R_ARM:
+                    f[limb + 1] = posed[limb + 1]
+                rotate_world(f, nb_limbs, lead_arm[0], Z_AXIS, side * SIDE_HOP_LEAD_ARM * w)
+        for leg, (dx, clearance, toes) in ((lead, key["lead"]), (trail, key["trail"])):
+            height = ground[leg[2]] + (clearance - key["h"]) * 100
+            f = place_foot(f, nb_limbs, feet, leg, standing[leg[2]] + [side * dx, 0, 0], height, toes)
+        out.append(f)
+    return np.array(out)
+
+
 ARMED_RUN_SWING = 0.45  # with scimitars in hand her arms swing this much of her run's swing (about her walk's)
 
 
@@ -923,6 +1034,18 @@ def main():
     if clipping:
         sys.exit(f"BonkArmed: scimitars cut through her body as she gets up ({clipping} points)")
     add("BonkArmed", bonk_armed, "the same, scimitars in hand, blades clear of her as she gets up", bonk_swords)
+    # side hops: bare from her idle, arms out as in the air; armed from her fighting stance, guard kept
+    feet = FootBoxes(nb_limbs)
+    neutral = tables["gPlayAsNabooruNeutralAnim"]
+    for right, suffix in ((True, "R"), (False, "L")):
+        add(f"SideHop{suffix}", make_side_hop(relaxed[0], nb_limbs, feet, right, air[0]),
+            f"side hop to her {'right' if right else 'left'}: crouch, push-off, low skip")
+        hop = make_side_hop(neutral[0], nb_limbs, feet, right)
+        hop_swords = np.repeat(sword_tables["gPlayAsNabooruNeutralAnim"][:1], len(hop), axis=0)
+        clipping = sum(clearance.count(f, s) for f, s in zip(hop, hop_swords))
+        if clipping:
+            sys.exit(f"SideHopArmed{suffix}: scimitars cut through her body ({clipping} points)")
+        add(f"SideHopArmed{suffix}", hop, "the same from her fighting stance, blades clear of her body", hop_swords)
     reflections = choose_reflections(nb_limbs, nb_walk.table)
     add("FlipBare", make_bare_flip(tables["gPlayAsNabooruFlipAnim"], soft[5], relaxed[0], nb_limbs, reflections),
         "backflip landing relaxed, for empty hands")

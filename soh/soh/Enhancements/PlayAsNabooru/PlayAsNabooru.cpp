@@ -54,6 +54,8 @@ enum class Mode {
     Pose, // holds frame `start`
 };
 
+constexpr f32 kCrossfadeStep = 0.2f; // a new move blends in over 5 frames
+
 struct Move {
     const char* name;
     const char* anim;
@@ -71,6 +73,8 @@ struct Move {
     f32 linkFrom = 0.0f;
     f32 linkTo = -1.0f;
     const Move* next = nullptr;
+    f32 blendIn = kCrossfadeStep; // how much of the way from her previous pose she comes each frame (1: at once)
+    f32 armsBlendIn = 0.0f;       // > 0: her arms come this much of the way each frame instead
 };
 
 // The jump attack leaps higher than the fighter's flip (model units, her model is drawn at 1/100 scale).
@@ -137,6 +141,30 @@ const Move kBackflipEnd = { .name = "BackflipEnd",
                             .bareAnim = GEN(FlipBare) }; // empty-handed she stands up relaxed
 // jumping and falling (landings are the end of the fighter's drop-from-the-ceiling animation)
 const Move kAirborne = { "Airborne", GEN(Air), nullptr, Mode::Pose, 0 };       // knees drawn up, arms out
+// Link's side hop leaves the ground at once and is over in 6 frames, under 7 units high. Hers (generated, frame by
+// frame with his) crouches and pushes off from her toes with her feet still on the ground (kept there, see
+// KeepFeetDown), then skips low with her legs apart; armed, from her fighting stance. No blending into it: the
+// crouch has to show at once (only her arms take a few frames, they may have been folded).
+constexpr f32 kHopArmsBlendIn = 0.34f;
+const Move kSideHopR = { .name = "SideHopR",
+                         .anim = GEN(SideHopArmedR),
+                         .swords = GEN_SWORDS(SideHopArmedR),
+                         .mode = Mode::Sync,
+                         .start = 0,
+                         .end = 6,
+                         .bareAnim = GEN(SideHopR),
+                         .blendIn = 1.0f,
+                         .armsBlendIn = kHopArmsBlendIn };
+const Move kSideHopL = { .name = "SideHopL",
+                         .anim = GEN(SideHopArmedL),
+                         .swords = GEN_SWORDS(SideHopArmedL),
+                         .mode = Mode::Sync,
+                         .start = 0,
+                         .end = 6,
+                         .bareAnim = GEN(SideHopL),
+                         .blendIn = 1.0f,
+                         .armsBlendIn = kHopArmsBlendIn };
+constexpr f32 kSideHopGroundFrames = 1.0f; // Link's frames of the hop during which her feet stay on the ground
 const Move kLand = { "Land", GEN(Jump), GEN_SWORDS(Jump), Mode::Sync, 1, 16 }; // after a long drop, standing
 // after a hop or a medium drop: the same landing with her knees half as bent, settling into her idle
 const Move kLandShort = { .name = "LandShort",
@@ -223,6 +251,8 @@ const std::vector<Rule> kRules = {
     { { "backturn_jump_end" }, &kBackflipEnd },
     { { "backturn_jump" }, &kBackflip },
     { { "side_jump_end" }, &kLandShort },
+    { { "Rside_jump" }, &kSideHopR },
+    { { "Lside_jump" }, &kSideHopL },
     { { "side_jump" }, &kAirborne },
     { { "defense_hit", "defense_long_hit" }, &kBlock }, // a hit blocked with the shield
     { { "derth" }, &kDeath },
@@ -296,7 +326,6 @@ constexpr f32 kMinCadence = 0.55f;
 constexpr f32 kMovingThreshold = 0.5f;
 constexpr f32 kRunThreshold = 4.5f;
 constexpr f32 kAttackStepThreshold = 1.0f; // Link's attacks slide him; above this, her legs step along
-constexpr f32 kCrossfadeStep = 0.2f;       // a new move blends in over 5 frames
 constexpr f32 kLayerFadeStep = 0.25f;
 constexpr s32 kKeepFoldedFrames = 3; // starting to walk from her folded-arms idle, her arms stay folded this long
 // Strafing slowly she leans much less than the fighter's sidestep: at up to kStraightSpeed this much of the lean is
@@ -324,7 +353,10 @@ Mask sMask = Mask::Upper;
 f32 sOverlayWeight = 0.0f;
 Vec3s sFinalJoints[NB_LIMB_MAX];
 Vec3s sFadeFrom[NB_LIMB_MAX]; // her pose when the current move started, blended out over a few frames
-f32 sFadeWeight = 0.0f;
+f32 sFadeWeight = 0.0f; // her arms have their own (a move can bring them in more slowly than the rest of her)
+f32 sFadeStep = kCrossfadeStep;
+f32 sFadeArmsWeight = 0.0f;
+f32 sFadeArmsStep = kCrossfadeStep;
 f32 sStraighten = 0.0f; // how much of her sideways lean is taken out (strafing slowly)
 
 bool sShowSwords = false;
@@ -337,6 +369,8 @@ s32 sKeepFolded = 0;    // remaining frames her arms stay folded as she starts w
 bool sWasShielding = false;
 bool sInAir = false;
 f32 sAirPeakY = 0.0f;    // highest point since leaving the ground
+const Move* sHop = nullptr; // the side hop under way, and the height she took off from
+f32 sHopFloorY = 0.0f;
 std::string sForcedName; // test harness: show one animation frame instead of mirroring Link
 f32 sForcedFrame = 0.0f;
 f32 sForcedSwordsFrame = -1.0f;
@@ -377,7 +411,7 @@ void ReleaseSkeleton() {
     ReleaseLayer(sBody);
     ReleaseLayer(sOverlay);
     sOverlayWeight = 0.0f;
-    sFadeWeight = 0.0f;
+    sFadeWeight = sFadeArmsWeight = 0.0f;
 }
 
 f32 LastFrame(const Move* move) {
@@ -798,8 +832,11 @@ void BlendLayers() {
     }
     if (sFadeWeight > 0.0f) {
         MixTranslation(sFinalJoints[0], sFadeFrom[0], sFadeWeight);
-        for (s32 i = 1; i < NB_LIMB_MAX; i++) {
-            MixRotation(sFinalJoints[i], sFadeFrom[i], sFadeWeight);
+    }
+    for (s32 i = 1; i < NB_LIMB_MAX; i++) {
+        f32 weight = InMask(Mask::Arms, i) ? sFadeArmsWeight : sFadeWeight;
+        if (weight > 0.0f) {
+            MixRotation(sFinalJoints[i], sFadeFrom[i], weight);
         }
     }
 }
@@ -807,12 +844,29 @@ void BlendLayers() {
 // blend from her current pose into whatever comes next
 void StartCrossfade() {
     memcpy(sFadeFrom, sFinalJoints, sizeof(sFadeFrom));
-    sFadeWeight = 1.0f;
+    sFadeWeight = sFadeArmsWeight = 1.0f;
 }
 
 bool IsLinkTouchdown(const void* anim) {
     const char* name = LinkAnimName(anim);
     return name != nullptr && (strcmp(name, "normal_landing") == 0 || strcmp(name, "normal_landing_free") == 0);
+}
+
+// Link's side hop leaves the ground on its first frame. While her hop still crouches and pushes off, her model is
+// lowered by as much as he has risen, so her feet stay where she took off.
+void KeepFeetDown(Player* player) {
+    if (sBody.move != &kSideHopR && sBody.move != &kSideHopL) {
+        sHop = nullptr;
+        return;
+    }
+    if (sHop != sBody.move) {
+        sHop = sBody.move;
+        sHopFloorY = player->actor.world.pos.y; // (he only moves on the next frame)
+    }
+    if (player->skelAnime.curFrame <= kSideHopGroundFrames && player->actor.scale.y > 0.0f) {
+        f32 risen = (player->actor.world.pos.y - sHopFloorY) / player->actor.scale.y; // model units
+        sFinalJoints[0].y -= (s16)CLAMP(risen, 0.0f, 2000.0f);
+    }
 }
 
 void Nabooru_OnPlayerUpdate() {
@@ -839,7 +893,7 @@ void Nabooru_OnPlayerUpdate() {
         SetMove(sBody, &sForced);
         StepLayer(sBody, player, 0.0f);
         sOverlayWeight = 0.0f;
-        sFadeWeight = 0.0f;
+        sFadeWeight = sFadeArmsWeight = 0.0f;
         BlendLayers();
         return;
     }
@@ -997,14 +1051,17 @@ void Nabooru_OnPlayerUpdate() {
     }
 
     if (raisingGuard) {
-        sFadeWeight = 0.0f;
+        sFadeWeight = sFadeArmsWeight = 0.0f;
         if (overlay != nullptr) {
             sOverlayWeight = 1.0f;
         }
     } else if (changed) {
         StartCrossfade();
+        sFadeStep = sBody.move->blendIn;
+        sFadeArmsStep = (sBody.move->armsBlendIn > 0.0f) ? sBody.move->armsBlendIn : sFadeStep;
     }
-    sFadeWeight = MAX(sFadeWeight - kCrossfadeStep, 0.0f);
+    sFadeWeight = MAX(sFadeWeight - sFadeStep, 0.0f);
+    sFadeArmsWeight = MAX(sFadeArmsWeight - sFadeArmsStep, 0.0f);
 
     f32 straighten = 0.0f;
     if (sBody.move == &kStrafe || sBody.move == &kStrafeMirror) {
@@ -1013,6 +1070,7 @@ void Nabooru_OnPlayerUpdate() {
     }
     Math_StepToF(&sStraighten, straighten, kStraightenStep);
     BlendLayers();
+    KeepFeetDown(player);
 }
 
 // ------------------------------------------------------------------------------------------------ voice
