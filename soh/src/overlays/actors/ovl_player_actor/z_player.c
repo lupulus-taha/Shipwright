@@ -4454,6 +4454,9 @@ void func_80837948(PlayState* play, Player* this, s32 arg2) {
 
     func_80837918(this, 0, dmgFlags);
     func_80837918(this, 1, dmgFlags);
+
+    // SoH: lets an enhancement that gives the player other attacks take this one over
+    GameInteractor_Should(VB_PLAYER_START_MELEE_ATTACK, true, this, play);
 }
 
 /**
@@ -15044,7 +15047,9 @@ void Player_Action_808502D0(Player* this, PlayState* play) {
     this->stateFlags2 |= PLAYER_STATE2_DISABLE_ROTATION_Z_TARGET;
 
     if (!func_80842DF4(play, this)) {
-        func_8084285C(this, 0.0f, sp44->unk_0C, sp44->unk_0D);
+        if (GameInteractor_Should(VB_PLAYER_SET_MELEE_WEAPON_STATE, true, this, play)) {
+            func_8084285C(this, 0.0f, sp44->unk_0C, sp44->unk_0D);
+        }
 
         if ((this->stateFlags2 & PLAYER_STATE2_SWORD_LUNGE) && (this->heldItemAction != PLAYER_IA_HAMMER) &&
             LinkAnimation_OnFrame(&this->skelAnime, 0.0f)) {
@@ -15059,7 +15064,8 @@ void Player_Action_808502D0(Player* this, PlayState* play) {
         Math_StepToF(&this->linearVelocity, 0.0f, 5.0f);
         func_8083C50C(this);
 
-        if (LinkAnimation_Update(play, &this->skelAnime)) {
+        if (GameInteractor_Should(VB_PLAYER_FINISH_MELEE_SWING, LinkAnimation_Update(play, &this->skelAnime), this,
+                                  play)) {
             if (!Player_ActionHandler_7(this, play)) {
                 u8 sp43 = this->skelAnime.movementFlags;
                 LinkAnimationHeader* sp3C;

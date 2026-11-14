@@ -1823,7 +1823,8 @@ void Player_PostLimbDrawGameplay(PlayState* play, s32 limbIndex, Gfx** dList, Ve
             gSPDisplayList(POLY_OPA_DISP++, gLinkChildLinkDekuStickDL);
 
             CLOSE_DISPS(play->state.gfxCtx);
-        } else if ((this->actor.scale.y >= 0.0f) && (this->meleeWeaponState != 0)) {
+        } else if ((this->actor.scale.y >= 0.0f) && (this->meleeWeaponState != 0) &&
+                   GameInteractor_Should(VB_PLAYER_UPDATE_MELEE_WEAPON_INFO, true, this, play)) {
             Vec3f spE4[3];
 
             if (Player_HoldsBrokenKnife(this)) {

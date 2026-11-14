@@ -35,14 +35,24 @@ Bigger than any polish item, but new work rather than fixes:
 - **Roll** (A while running). Link's most frequent evasive move; she just keeps running through it.
 - Climbing, ledge grab and climb-up, ladders, swimming, crawling, pushing and pulling, horse riding.
 
-## Attacks (left for the attack overhaul)
+## Attacks (overhauled 2026-11-14)
 
-Found while comparing; not touched.
+Her sword attacks on the ground no longer mirror Link's. They are the Gerudo's own animations at the speed they were made for, chained as a combo of her own (see "attacks" in `PlayAsNabooru.cpp`):
 
-- **No lunge.** Every one of Link's slashes is a deep lunge (front knee bent, back leg long, body low into the cut). She swings from an upright stance. While Link slides forward, the FightWalk legs overlay replaces the fighter slash's own knee bend (her pelvis drops 2.2 units and goes 8.6 forward in that animation).
-- **Combo finisher recovery replays the swing.** Link's `fighter_Lside_kiru_finsh_end` (also the LL/LR variants) matches no `_end` rule, because `kiru_end` isn't a substring of `kiru_finsh_end`. It falls through to `_kiru` → `kSlash`, so she swings again during his recovery, with a 119° one-frame pop. One-line fix: add `"kiru_finsh_end"` to the `kSlashEnd` rule.
-- **Possible hitch at slash starts.** On the first frame of every slash the player moves about 8 units back along their facing (7.8; 6.4 for the finisher, 9.6 for the pierce), then advances during the swing. Her drawn root follows the actor. The new `fwd`/`lroot`/`nroot` log fields couldn't tell whether Link's drawn model compensates, so check by eye.
-- Spin attack and jump attack compared well with Link's; nothing big there.
+| Step | Animation | Frames | Blade hits on |
+|---|---|---|---|
+| 1 | The fighter's slash (`gGerudoRedSlashAnim`): her right scimitar cuts down across her front | 10 (swing 0-7, then back to her stance) | 4-6 |
+| 2 | The spear guard's unused horizontal slash (`gGerudoPurpleUnusedHorizontalSlashAnim`), from where her left foot steps in, then its recovery (`...UnusedSlashToStandingAnim`) with her arms easing into her armed idle instead of standing to attention | 7 + 11 | 2-4 |
+| 3 | The fighter's leaping spin (`gGerudoRedSpinAttackAnim` from frame 10, already coiled), carrying her 40 units forward: the finisher | 24 (swing to 25, recovery to 33) | 14-23 |
+
+- B during a swing goes on to the next step as soon as the blade is through; B during the recovery, or up to 12 frames after a swing, does too. Otherwise the combo starts over with the slash. The stick doesn't choose the attack, but a forward stab's lunge (22 units) still applies to whichever step is next.
+- Mashing B, the three steps take 28 frames (Link's slash, slash, finisher: about 36). A single slash is 10 frames; Link's is 5 plus a 7-frame recovery.
+- She stands her ground: Link's swing animations no longer move her (that was the 8-unit jump back at the start of every slash), and her legs are the animations' own.
+- Holding B after a slash still charges a spin attack; walking, rolling, blocking or attacking cancels a recovery; walls and shields bounce her blade as they do Link's sword.
+- Hitboxes and trails of every sword attack (combo, jump attack, spin attack, the stab from behind the shield) come from her scimitars, one hitbox and one trail per blade, instead of Link's hidden sword. The jump attack's landing cut stays active for its 4 frames (Link's sword: 2).
+- The Megaton Hammer keeps Link's hitbox and the old mirrored swing.
+
+Not done: the spin attack's shockwave ring stays at ground level while she leaps above it (it is where the shockwave hits). The crouch stab rises out of her kneel into the standing cut.
 
 ## Compared and fine
 

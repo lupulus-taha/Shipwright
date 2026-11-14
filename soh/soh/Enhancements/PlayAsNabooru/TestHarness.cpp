@@ -64,6 +64,7 @@ extern GameState* gGameState;
 }
 
 void PlayAsNabooru_DebugState(const char** move, float* frame);
+void PlayAsNabooru_DebugAttack(const char** name, float* frame, int* swinging, int* next, int* window, int* hitboxes);
 void PlayAsNabooru_DebugMotion(float* maxDegrees, int* joint, float* rootMove);
 void PlayAsNabooru_DebugRoot(short* x, short* y, short* z);
 void PlayAsNabooru_DebugForce(const char* name, float frame, const char* swords, float swordsFrame);
@@ -273,16 +274,24 @@ void LogFrame() {
     PlayAsNabooru_DebugRoot(&hx, &hy, &hz);
     float linkRoot = (link->jointTable != nullptr) ? link->jointTable[0].z * player->actor.scale.z : 0.0f;
     float herRoot = hz * player->actor.scale.z;
+    // her attack: its frame ('s' swinging, 'r' recovering), the combo step B would go on with and for how long; the
+    // weapon's state (0 idle, -1 trail, 1 hitting), how many blades had a hitbox last drawn
+    const char* attack = "-";
+    float attackFrame = 0.0f;
+    int swinging = 0, comboNext = 0, comboWindow = 0, hitboxes = 0;
+    PlayAsNabooru_DebugAttack(&attack, &attackFrame, &swinging, &comboNext, &comboWindow, &hitboxes);
     fprintf(sLog,
             "%5d step%-3zu link %-34s %5.1f/%5.1f up %-26s %5.1f | nb %-22s %5.1f | y %7.1f vy %5.1f spd %5.1f "
             "st1 %08X st2 %08X bg %04X face %04X dir %04X mv %4.1f fall %d dpose %5.1f@%-2d droot %5.0f "
-            "fwd %7.1f lroot %6.1f nroot %6.1f\n",
+            "fwd %7.1f lroot %6.1f nroot %6.1f atk %s:%.0f%c next %d/%d ws %d hb %d\n",
             sFrame, sStepIndex, ShortAnimName(link->animation), link->curFrame, link->endFrame,
             ShortAnimName(upper->animation), upper->curFrame, move, moveFrame, player->actor.world.pos.y,
             player->actor.velocity.y, player->actor.speedXZ, player->stateFlags1, player->stateFlags2,
             player->actor.bgCheckFlags, (u16)player->actor.shape.rot.y, (u16)player->actor.world.rot.y,
             sqrtf(SQ(player->actor.world.pos.x - sLastPos.x) + SQ(player->actor.world.pos.z - sLastPos.z)),
-            player->fallDistance, motion, motionJoint, rootMove, forward, linkRoot, herRoot);
+            player->fallDistance, motion, motionJoint, rootMove, forward, linkRoot, herRoot, attack, attackFrame,
+            (strcmp(attack, "-") == 0) ? ' ' : swinging ? 's' : 'r', comboNext, comboWindow, player->meleeWeaponState,
+            hitboxes);
     sLastPos = player->actor.world.pos;
 
     if (!sLogActors.empty()) {

@@ -2648,6 +2648,46 @@ typedef enum {
     // - `*PlayState`
     VB_PLAYER_UPDATE_BOTTLE_HELD,
 
+    // Fired at the end of func_80837948, when a melee attack (PLAYER_MWA_*) has been set up: the swing action, Link's
+    // animation, its movement and the weapon's damage are in place. The result is not used.
+    // #### `args`
+    // - `*Player`
+    // - `*PlayState`
+    VB_PLAYER_START_MELEE_ATTACK,
+
+    // Every frame of a melee swing (Player_Action_808502D0), before the weapon's state is set from Link's animation
+    // frame (`meleeWeaponState`: 0 idle, -1 leaving a trail, 1 also hitting). Return false to set it yourself.
+    // #### `result`
+    // ```c
+    // true
+    // ```
+    // #### `args`
+    // - `*Player`
+    // - `*PlayState`
+    VB_PLAYER_SET_MELEE_WEAPON_STATE,
+
+    // Every frame of a melee swing (Player_Action_808502D0): whether the swing is over (the next attack starts if B
+    // was pressed, else Link's recovery animation).
+    // #### `result`
+    // ```c
+    // LinkAnimation_Update(play, &this->skelAnime)
+    // ```
+    // #### `args`
+    // - `*Player`
+    // - `*PlayState`
+    VB_PLAYER_FINISH_MELEE_SWING,
+
+    // Fired from Player_PostLimbDrawGameplay for Link's left hand while a melee weapon (not a Deku stick) is active:
+    // whether to take the weapon's tip and base from that hand, for its trail and its hitboxes.
+    // #### `result`
+    // ```c
+    // true
+    // ```
+    // #### `args`
+    // - `*Player`
+    // - `*PlayState`
+    VB_PLAYER_UPDATE_MELEE_WEAPON_INFO,
+
     // #### `result`
     // ```c
     // false

@@ -1098,6 +1098,39 @@ def make_bonk(defeat, kneel, rest, defeat_swords=None, clearance=None):
     return np.array(out) if swords is None else (np.array(out), np.array(swords))
 
 
+# The spear guard's horizontal slash (cut from the game: nothing plays it), for twin scimitars. She steps in with her
+# left foot and sweeps the spear, held in her right hand, level from her left across her front to her right; her left
+# hand lets go of the shaft and swings back. A scimitar in the fighter's grip points within 24 degrees of where the
+# spear's blade did, so the sweep is the right scimitar's as it stands. Her first frames only lift her left foot for
+# the step: the sweep starts as that foot passes where it stands in the fighter's stance, which is where her combo
+# comes from. The guard then draws herself up to attention, spear upright (her unused recovery): Nabooru's legs and
+# body follow that, her arms come down to her armed idle instead, and she ends standing in it.
+SWEEP_FROM = 2
+SWEEP_SETTLE = 4  # the last frames of the recovery, over which the rest of her settles into her idle
+
+
+def make_sweep(slash, recover, rest, clearance):
+    """-> the sweep (frames SWEEP_FROM on of `slash`) followed by its recovery, ending in `rest`; with `clearance`, a
+    recovery frame where a blade would cut her eases its arms a little less or more, whichever is nearest and clear."""
+    out = [f.copy() for f in slash[SWEEP_FROM:]]
+    last = out[-1]
+    n = len(recover)
+    for i, frame in enumerate(recover):
+        scheduled = smoothstep((i + 1) / n)
+        body = blend_frames(frame, rest, smoothstep((i + 1 - (n - SWEEP_SETTLE)) / SWEEP_SETTLE))
+        tries = [scheduled] + sorted(np.arange(0.0, 1.0001, 0.05), key=lambda w: abs(w - scheduled))
+        for w in tries:
+            eased = blend_frames(last, rest, min(w, 1.0))
+            posed = body.copy()
+            for limb in NB_L_ARM + NB_R_ARM:
+                posed[limb + 1] = eased[limb + 1]
+            if clearance is None or clearance.count(posed) == 0:
+                break
+        out.append(posed)
+    out[-1] = rest.copy()
+    return np.array(out)
+
+
 # Left/right limb pairs, and the reflection that maps each limb's local frame onto its mirror image's.
 NB_MIRROR = {1: 4, 2: 5, 3: 6, 8: 11, 9: 12, 10: 13}
 NB_MIRROR.update({b: a for a, b in NB_MIRROR.items()})
@@ -1367,6 +1400,17 @@ def main():
         if clipping:
             sys.exit(f"{name}: scimitars cut through her body ({clipping} points)")
         add(name, table, "with scimitars, blades clear of her body")
+
+    # the cut horizontal slash, with its recovery into her armed idle
+    sweep = make_sweep(tables["gPlayAsNabooruGuardSlashAnim"], tables["gPlayAsNabooruGuardSlashRecoverAnim"],
+                       armed_idle[0], clearance)
+    swing = len(tables["gPlayAsNabooruGuardSlashAnim"]) - SWEEP_FROM
+    print("Sweep: blade points inside her body per frame:", [clearance.count(f) for f in sweep])
+    clipping = sum(clearance.count(f) for f in sweep[swing:])
+    if clipping:
+        sys.exit(f"Sweep: scimitars cut through her body as she recovers ({clipping} points)")
+    add("Sweep", sweep, f"the spear guard's unused horizontal slash ({swing} frames), then recovering into her armed idle",
+        np.zeros((len(sweep), 3, 3), int))
 
     side = tables["gPlayAsNabooruSidestepAnim"]
     side_mirror = mirror_table(side, nb_limbs, reflections)

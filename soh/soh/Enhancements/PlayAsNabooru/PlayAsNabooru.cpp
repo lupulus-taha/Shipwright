@@ -10,8 +10,11 @@
 // her motion. Anything unmatched falls back to her locomotion, which looks at how she moves relative to where she
 // faces (forward, backward, sideways) and whether her scimitars are out.
 //
-// A second layer can drive part of her body from another animation: her upper body while she shields on the move,
-// and her legs while she slashes on the move (Link's attacks slide him forward).
+// A second layer can drive part of her body from another animation: her upper body while she shields on the move.
+//
+// Her sword attacks on the ground are her own (see "attacks"): the Gerudo fighter's slash, the spear guard's unused
+// sweep and the fighter's leaping spin, chained as a combo, each at its own speed. Link's swing only hosts them. Her
+// scimitars are the weapon: the hitboxes and trails of every attack come from her blades, not Link's hidden sword.
 //
 // Animations she doesn't have herself are retargeted from other Gerudo by tools/build_nabooru_assets.py, which writes
 // them to play_as_nabooru.o2r for the mods folder. Every one of them falls back gracefully if it's missing.
@@ -38,6 +41,14 @@ extern "C" {
 #include "align_asset_macro.h"
 extern PlayState* gPlayState;
 void ResourceMgr_UnregisterSkeleton(SkelAnime* skelAnime);
+// the player actor's melee attacks (z_player.c, z_player_lib.c)
+void Player_Action_808502D0(Player* player, PlayState* play); // the swing
+void func_80837948(PlayState* play, Player* player, s32 attack); // starts an attack (PLAYER_MWA_*)
+s32 func_80837818(Player* player);                             // the attack the stick asks for
+void func_80837530(PlayState* play, Player* player, s32 arg2); // starts a spin attack's charge effect
+void func_80833A20(Player* player, s32 meleeWeaponState);      // sets the weapon's state (sound as it goes active)
+void func_80832318(Player* player);                            // the weapon goes idle
+extern f32 sSwordTypes[];                                      // sword trail types by melee weapon
 }
 
 #define CVAR_PLAY_AS_NABOORU_NAME CVAR_ENHANCEMENT("PlayAsNabooru")
@@ -55,6 +66,7 @@ enum class Mode {
     Sync, // frame start..end follows Link's progress through his current animation (end < start plays backwards)
     Once, // plays start..end at `speed` frames per frame, then holds
     Pose, // holds frame `start`
+    Attack, // one of her own attacks: start..end, the frame set by the attack (see "attacks")
 };
 
 constexpr f32 kCrossfadeStep = 0.2f; // a new move blends in over 5 frames
@@ -113,9 +125,39 @@ const Move kStrafeMirror = { "StrafeMirror", GEN(SidestepMirror), GEN_SWORDS(Sid
 // shield: the fighter's crossed-scimitar block, standing upright
 const Move kBlock = { "Block", GEN(Guard), GEN_SWORDS(Guard), Mode::Pose, 0 };
 const Move kKneel = { "Kneel", GEN(Crouching), nullptr, Mode::Loop };
-// attacks: Link's slash animation is the swing, his "_end" animation the recovery
-const Move kSlash = { "Slash", GEN(Slash), GEN_SWORDS(Slash), Mode::Sync, 0, 6 };
-const Move kSlashEnd = { "SlashEnd", GEN(Slash), GEN_SWORDS(Slash), Mode::Sync, 6, 9 };
+// Her sword combo (see "attacks"): the fighter's slash, the spear guard's sweep (which nothing in the game plays) with
+// its recovery, and the fighter's leaping spin, from where she is already coiled. Each cuts in quickly: the blade is
+// on its way within three frames.
+const Move kComboSlash = { .name = "ComboSlash",
+                           .anim = GEN(Slash),
+                           .swords = GEN_SWORDS(Slash),
+                           .mode = Mode::Attack,
+                           .start = 0,
+                           .end = 9,
+                           .blendIn = 0.5f };
+const Move kComboSweep = { .name = "ComboSweep",
+                           .anim = GEN(Sweep),
+                           .swords = GEN_SWORDS(Sweep),
+                           .mode = Mode::Attack,
+                           .start = 0,
+                           .end = 17,
+                           .blendIn = 0.5f };
+const Move kComboSpin = { .name = "ComboSpin",
+                          .anim = GEN(SpinAttack),
+                          .swords = GEN_SWORDS(SpinAttack),
+                          .mode = Mode::Attack,
+                          .start = 10,
+                          .end = 33,
+                          .blendIn = 0.34f };
+// A stab from behind Link's shield (4 frames): the cut of her slash, out of her guard at once.
+const Move kGuardSlash = { .name = "GuardSlash",
+                           .anim = GEN(Slash),
+                           .swords = GEN_SWORDS(Slash),
+                           .mode = Mode::Sync,
+                           .start = 2,
+                           .end = 6,
+                           .blendIn = 0.5f };
+// the Megaton Hammer: Link's swing is the swing, his "_end" animation the recovery
 const Move kHeavy = { "Heavy", GEN(GuardSlash), nullptr, Mode::Sync, 0, 8 };
 const Move kHeavyEnd = { "HeavyEnd", GEN(GuardSlashRecover), nullptr, Mode::Sync, 0, 10 };
 const Move kSpinWindup = { "SpinWindup", GEN(SpinAttack), GEN_SWORDS(SpinAttack), Mode::Sync, 0, 11 };
@@ -316,12 +358,8 @@ const std::vector<Rule> kRules = {
     { { "jump_kiru" }, &kJumpSlashAir },
     { { "hammer_hit_end", "hammer_side_hit_end" }, &kHeavyEnd },
     { { "hammer_hit", "hammer_side_hit" }, &kHeavy },
-    // combos alternate between her quick slash and the guard's heavy slash
-    { { "Rside_kiru_end", "Rside_kiru_finsh_end", "normal_kiru_end", "normal_kiru_finsh_end", "turn_kiruR_end" },
-      &kHeavyEnd },
-    { { "Rside_kiru", "normal_kiru", "turn_kiruR" }, &kHeavy },
-    { { "kiru_end" }, &kSlashEnd },
-    { { "_kiru" }, &kSlash },
+    { { "defense_kiru" }, &kGuardSlash },
+    { { "_kiru" }, nullptr }, // his slashes and their recoveries: her own attacks play instead (see "attacks")
     { { "backturn_jump_end" }, &kBackflipEnd },
     { { "backturn_jump" }, &kBackflip },
     { { "Rside_jump_end" }, &kSideHopLandR }, // (also his landing with an enemy targeted, "..._endR")
@@ -438,6 +476,7 @@ f32 sFadeArmsStep = kCrossfadeStep;
 f32 sStraighten = 0.0f; // how much of her sideways lean is taken out (strafing slowly)
 
 bool sShowSwords = false;
+f32 sAttackFrame = 0.0f; // where her attack under way is in its animation (see "attacks")
 Vec3f sPrevPos;
 const void* sLinkPrevAnim = nullptr; // Link's animation can stall while he moves (see Nabooru_OnPlayerUpdate)
 f32 sLinkPrevFrame = 0.0f;
@@ -486,11 +525,14 @@ void ReleaseLayer(Layer& layer) {
     }
 }
 
+void ReleaseTrail();
+
 void ReleaseSkeleton() {
     ReleaseLayer(sBody);
     ReleaseLayer(sOverlay);
     sOverlayWeight = 0.0f;
     sFadeWeight = sFadeArmsWeight = 0.0f;
+    ReleaseTrail();
 }
 
 f32 LastFrame(const Move* move) {
@@ -659,6 +701,9 @@ void StepLayer(Layer& layer, Player* player, f32 loopSpeed) {
         case Mode::Pose:
             layer.skel.curFrame = move->start;
             break;
+        case Mode::Attack:
+            layer.skel.curFrame = CLAMP(sAttackFrame, move->start, end);
+            break;
     }
     SkelAnime_Update(&layer.skel);
     if (move->lift > 0.0f) {
@@ -797,16 +842,17 @@ const Move* Locomotion(Player* player, f32* loopSpeed, bool* legsOnly) {
     return Armed(LocomotionMove(player, loopSpeed, legsOnly));
 }
 
+// (the hammer's: her own attacks stand their ground)
 bool IsAttack(const Move* move) {
-    return move == &kSlash || move == &kSlashEnd || move == &kHeavy || move == &kHeavyEnd;
+    return move == &kHeavy || move == &kHeavyEnd;
 }
 
 // moves that give way to her walk/run when Link moves while his animation is stalled (see Nabooru_OnPlayerUpdate)
 bool YieldsToLocomotion(const Move* move) {
-    return IsAttack(move) || move == &kSpinEnd || move == &kLandQuick || move == &kBackflipEnd ||
-           move == &kJumpSlashEnd || move == &kLand || move == &kLandShort || move == &kLandShortStance ||
-           move == &kLandDrop || move == &kLandDropStance ||
-           move == &kSideHopLandR || move == &kSideHopLandL;
+    return IsAttack(move) || move == &kGuardSlash || move == &kSpinEnd || move == &kLandQuick ||
+           move == &kBackflipEnd || move == &kJumpSlashEnd || move == &kLand || move == &kLandShort ||
+           move == &kLandShortStance || move == &kLandDrop || move == &kLandDropStance || move == &kSideHopLandR ||
+           move == &kSideHopLandL;
 }
 
 void UpdateEyes() {
@@ -970,6 +1016,195 @@ void KeepFeetDown(Player* player) {
     }
 }
 
+// ------------------------------------------------------------------------------------------------ attacks
+//
+// With a sword of Link's in hand (her scimitars), B on the ground plays her own attacks instead of mirroring his:
+// the animations the Gerudo fight with, at the speed they were made for (one frame per game frame), where Link's
+// slashes are over in 5 frames. They go in a fixed order, whatever the stick asks for:
+//
+//   1. the fighter's slash: her right scimitar cuts down across her front (the cut is frames 3-6 of 10)
+//   2. the spear guard's sweep, which the game never plays: a step in and a level cut from her left to her right
+//   3. the fighter's leaping spin, both blades around her, carrying her forward: the finisher
+//
+// Pressing B again during an attack goes on to the next one as soon as the blade is through; pressing it while she
+// recovers, or shortly after, does too. Otherwise the combo starts over. Link's swing action still hosts each attack
+// (so walls, shields, hit pauses, the lunge of a forward stab, holding B to charge a spin all work as his do), but
+// his animation no longer times it or moves her: hers does, through the VB_PLAYER_*_MELEE_* hooks. She stands her
+// ground as the Gerudo do; their animations shift her weight themselves.
+struct Attack {
+    const Move* move; // Mode::Attack: from its start to the end of her recovery
+    f32 swingEnd;     // the frame her swing is over: on with the combo if B was pressed, else she recovers (and can
+                      // walk, block, roll or attack out of it)
+    f32 trailFrom;    // her blades leave trails from this frame,
+    f32 hitFrom;      // hit from this one (a hitbox spans a blade's sweep since the frame before, so the first is
+                      // on the frame after)
+    f32 hitTo;        // to this one
+    bool leftBlade;   // whether her left scimitar cuts too
+    bool hard;        // the heavy swing sound and her strong shout
+    f32 leapFrom = -1.0f; // frames during which she moves forward at `leapSpeed`
+    f32 leapTo = -1.0f;
+    f32 leapSpeed = 0.0f;
+};
+
+// The fighter's spin carries her 120 units (8 frames at speed 10, which is 15 units a frame); Link's finishers carry
+// him about 30. Hers: 40.
+const Attack kCombo[] = {
+    { &kComboSlash, 7.0f, 2.0f, 3.0f, 6.0f, false, false },
+    { &kComboSweep, 6.0f, 0.0f, 1.0f, 4.0f, true, false },
+    { &kComboSpin, 25.0f, 13.0f, 13.0f, 23.0f, true, true, 13.0f, 20.0f, 3.4f },
+};
+constexpr s32 kComboWindow = 12; // frames after a swing during which B goes on with the combo
+
+const Attack* sAttack = nullptr; // her attack under way: its swing, then its recovery
+bool sSwinging = false;          // the swing (Link's swing action runs)
+bool sAttackStarted = false;     // this frame
+bool sAttackTicked = false;      // its frame has been advanced this frame
+bool sChainBuffered = false;     // B was pressed during the swing
+s32 sComboNext = 0;              // the next step, if B comes in time
+s32 sComboTimer = 0;
+WeaponInfo sLeftTrailInfo = {}; // her left scimitar's trail (her right one's is Link's sword's)
+s32 sLeftTrail = -1;            // its effect
+s32 sBladeHits = 0;             // for tools: hitboxes set this frame
+
+// Link holds a sword: her scimitars are the weapon. (The Megaton Hammer stays Link's own, hidden: it has to strike
+// the ground where his does.)
+bool HoldsSword(Player* player) {
+    s32 weapon = Player_GetMeleeWeaponHeld(player); // 1 Master Sword, 2 Kokiri Sword, 3 Biggoron's Sword
+    return weapon >= 1 && weapon <= 3;
+}
+
+// Her own attacks apply: a sword in hand, her animations installed.
+bool HasOwnAttacks(Player* player) {
+    return HoldsSword(player) && HasResource(kComboSlash.anim) && HasResource(kComboSweep.anim) &&
+           HasResource(kComboSpin.anim);
+}
+
+// Link's slashes, stabs and their finishers (not his jump or spin attacks, nor the hammer)
+bool IsGroundSlash(s32 attack) {
+    return attack < PLAYER_MWA_FLIPSLASH_START || attack == PLAYER_MWA_BACKSLASH_RIGHT ||
+           attack == PLAYER_MWA_BACKSLASH_LEFT;
+}
+
+void EndAttack() {
+    sAttack = nullptr;
+    sSwinging = false;
+}
+
+// Link has set up an attack: if it's a slash, it becomes the next step of her combo.
+void Attack_OnStart(Player* player) {
+    EndAttack();
+    if (!IsGroundSlash(player->meleeWeaponAnimation) || !HasOwnAttacks(player)) {
+        sComboTimer = 0;
+        return;
+    }
+    s32 step = (sComboTimer > 0) ? sComboNext : 0;
+    sAttack = &kCombo[step];
+    sAttackFrame = sAttack->move->start;
+    sSwinging = sAttackStarted = true;
+    sChainBuffered = false;
+    sComboNext = (step + 1) % ARRAY_COUNT(kCombo);
+    sComboTimer = 0;
+    player->skelAnime.movementFlags = 0; // Link's animation doesn't move her
+    player->unk_845 = 0;                 // nor does his own combo count (it would play his finishers)
+}
+
+// A frame of the swing: her attack moves on a frame, her blades go active and idle with it. Returns whether the
+// weapon's state was set here (else Link's animation sets it).
+bool Attack_SetWeaponState(Player* player) {
+    if (sAttack == nullptr || !sSwinging) {
+        // Landing a jump attack, Link's sword is only active for two frames; her cut takes four.
+        bool landing = player->meleeWeaponAnimation == PLAYER_MWA_JUMPSLASH_FINISH ||
+                       player->meleeWeaponAnimation == PLAYER_MWA_FLIPSLASH_FINISH;
+        if (landing && sShowSwords && HoldsSword(player) && sBody.move == &kJumpSlashHit && !OnceDone(sBody)) {
+            func_80833A20(player, 1);
+            return true;
+        }
+        return false;
+    }
+    sAttackFrame += 1.0f;
+    sAttackTicked = true;
+    if (CHECK_BTN_ALL(gPlayState->state.input[0].press.button, BTN_B)) {
+        sChainBuffered = true;
+    }
+    // Holding B since the attack began charges a spin attack once Link's 8-frame count runs down: hers may take
+    // longer, so the count waits for her swing to end.
+    if (player->unk_844 == 1) {
+        player->unk_844 = 2;
+    }
+    if (sAttackFrame >= sAttack->trailFrom && sAttackFrame <= sAttack->hitTo) {
+        u8 comboCount = player->unk_845;
+        player->unk_845 = sAttack->hard ? 3 : 0; // (what makes the swing sound heavy)
+        func_80833A20(player, (sAttackFrame >= sAttack->hitFrom) ? 1 : -1);
+        player->unk_845 = comboCount;
+    } else {
+        func_80832318(player);
+    }
+    return true;
+}
+
+// Later in a frame of the swing: whether it's over (`linkDone`: his animation is). With B pressed during it, the next
+// attack starts at once.
+bool Attack_SwingFinished(Player* player, PlayState* play, bool linkDone) {
+    if (sAttack == nullptr || !sSwinging) {
+        return linkDone;
+    }
+    if (sAttackFrame >= sAttack->leapFrom && sAttackFrame <= sAttack->leapTo) {
+        player->linearVelocity = sAttack->leapSpeed;
+    }
+    if (sAttackFrame < sAttack->swingEnd) {
+        return false;
+    }
+    sSwinging = false;
+    sComboTimer = kComboWindow;
+    if (sChainBuffered) {
+        // as Link's swing does when B is pressed on its last frame
+        s32 attack = func_80837818(player);
+        func_80837948(play, player, attack);
+        if (attack >= PLAYER_MWA_SPIN_ATTACK_1H) { // the stick was spun
+            player->stateFlags2 |= PLAYER_STATE2_SPIN_ATTACKING;
+            func_80837530(play, player, 0);
+        }
+        return false;
+    }
+    return true;
+}
+
+// Once per frame, after the player's update: her recovery plays out unless she does anything else.
+void UpdateAttack(Player* player, bool grounded, bool moving, bool shielding) {
+    if (sComboTimer > 0 && !sSwinging) {
+        sComboTimer--;
+    }
+    if (sAttack != nullptr && sSwinging) {
+        if (player->actionFunc != Player_Action_808502D0) {
+            EndAttack(); // hit, or her blade bounced off something
+        }
+    } else if (sAttack != nullptr) {
+        if (!sAttackTicked && !sAttackStarted) {
+            sAttackFrame += 1.0f;
+        }
+        // Link meanwhile plays his recovery, then stands
+        const char* name = LinkAnimName(player->skelAnime.animation);
+        bool resting = name != nullptr && ((strstr(name, "kiru") != nullptr && strstr(name, "_end") != nullptr) ||
+                                           strstr(name, "wait") != nullptr);
+        if (sAttackFrame > EndFrame(sAttack->move) || !resting || moving || shielding || !grounded || !sShowSwords) {
+            EndAttack();
+        }
+    }
+    sAttackTicked = false;
+    if (player->meleeWeaponState == 0) {
+        sLeftTrailInfo.active = 0;
+    }
+}
+
+void ReleaseTrail() {
+    if (sLeftTrail >= 0 && gPlayState != nullptr) {
+        Effect_Delete(gPlayState, sLeftTrail);
+    }
+    sLeftTrail = -1;
+    EndAttack();
+    sComboTimer = 0;
+}
+
 void RestoreSpinCharge();
 
 void Nabooru_OnPlayerUpdate() {
@@ -994,6 +1229,7 @@ void Nabooru_OnPlayerUpdate() {
     sWasShielding = shielding;
 
     if (!sForcedName.empty()) {
+        EndAttack();
         SetMove(sBody, &sForced);
         StepLayer(sBody, player, 0.0f);
         sOverlayWeight = 0.0f;
@@ -1006,6 +1242,7 @@ void Nabooru_OnPlayerUpdate() {
     sPrevPos = player->actor.world.pos;
     bool grounded = player->actor.bgCheckFlags & BGCHECKFLAG_GROUND;
     bool moving = player->actor.speedXZ > kMovingThreshold;
+    UpdateAttack(player, grounded, moving, shielding);
 
     // While Z-targeting, Link's walk/run is blended into his skeleton separately: his main animation then stalls on
     // whatever came before (often a slash recovery) while he moves. Treat that as locomotion.
@@ -1081,6 +1318,10 @@ void Nabooru_OnPlayerUpdate() {
         sLandingFrames = 0;
     }
 
+    if (sAttack != nullptr) {
+        body = sAttack->move; // her own attack, whatever Link's hidden swing looks like
+    }
+
     f32 stride = 1.0f;
     if (body == nullptr) {
         bool legsOnly = false;
@@ -1119,6 +1360,9 @@ void Nabooru_OnPlayerUpdate() {
         }
     } else {
         sKeepFolded = 0;
+        if (body == &kGuardSlash) {
+            sOverlayWeight = 0.0f; // her guard opens at once
+        }
         if (IsAttack(body) && stepDistance > kAttackStepThreshold && HasResource(kFightWalk.anim)) {
             // Link's slashes carry him forward: let her legs step instead of sliding.
             overlay = &kFightWalk;
@@ -1150,6 +1394,8 @@ void Nabooru_OnPlayerUpdate() {
     bool continues = hadMove && body != sBody.move && body->mode != Mode::Loop && AnimFor(body) == sBody.anim &&
                      fabsf(body->start - sBody.skel.curFrame) <= 1.0f;
     bool changed = SetMove(sBody, body) && hadMove && !continues;
+    changed |= sAttackStarted && hadMove; // (the same attack again starts over)
+    sAttackStarted = false;
     if (freezeBody) {
         SkelAnime_Update(&sBody.skel);
     } else {
@@ -1341,13 +1587,20 @@ const char* ItemName(u32 item) {
 }
 
 void ChargeAlongScimitars();
+void UpdateBlades(Player* player);
 
 void Nabooru_OnPlayerDraw(bool isFirstPerson) {
     if (isFirstPerson || !sBody.ready || gPlayState == nullptr) {
         return;
     }
     ::PlayAsNabooru_DrawModel();
+    UpdateBlades(GET_PLAYER(gPlayState));
     ChargeAlongScimitars();
+}
+
+// (Dark Link runs the player's code too: his attacks stay his)
+bool IsHer(Player* player) {
+    return gPlayState != nullptr && player == GET_PLAYER(gPlayState);
 }
 
 void RegisterPlayAsNabooru() {
@@ -1384,6 +1637,34 @@ void RegisterPlayAsNabooru() {
         if (const char* name = ItemName(item)) {
             *should = true;
             memcpy(gPlayState->pauseCtx.nameSegment, name, strlen(name) + 1);
+        }
+    });
+
+    // Her own sword attacks (see "attacks"), and her scimitars as the weapon (see UpdateBlades).
+    COND_VB_SHOULD(VB_PLAYER_START_MELEE_ATTACK, enabled, {
+        Player* player = va_arg(args, Player*);
+        if (IsHer(player)) {
+            Attack_OnStart(player);
+        }
+    });
+    COND_VB_SHOULD(VB_PLAYER_SET_MELEE_WEAPON_STATE, enabled, {
+        Player* player = va_arg(args, Player*);
+        if (IsHer(player) && Attack_SetWeaponState(player)) {
+            *should = false;
+        }
+    });
+    COND_VB_SHOULD(VB_PLAYER_FINISH_MELEE_SWING, enabled, {
+        Player* player = va_arg(args, Player*);
+        PlayState* play = va_arg(args, PlayState*);
+        if (IsHer(player)) {
+            *should = Attack_SwingFinished(player, play, *should);
+        }
+    });
+    COND_VB_SHOULD(VB_PLAYER_UPDATE_MELEE_WEAPON_INFO, enabled, {
+        Player* player = va_arg(args, Player*);
+        // (in first person Link's own arms and weapon are still drawn)
+        if (IsHer(player) && sShowSwords && HoldsSword(player) && sBody.ready && player->unk_6AD == 0) {
+            *should = false;
         }
     });
 
@@ -1585,7 +1866,87 @@ void ChargeAlongScimitars() {
     }
 }
 
+// Her scimitars are the weapon. While Link's (hidden) sword is active, its trail and its two hitboxes are taken from
+// her blades instead of his hand, one of each per scimitar, as she is drawn (Link's are set as he is drawn too). In
+// a scimitar limb's space the blade runs from its guard to its tip as below; a hitbox spans a blade's sweep since the
+// last frame, from her hand to a little past the tip (Link's reaches 12 units past his sword's).
+constexpr Vec3f kTrailBase = { 400.0f, -480.0f, 0.0f };
+constexpr Vec3f kTrailTip = { -882.0f, -3350.0f, 0.0f };
+constexpr Vec3f kHitBase = { 400.0f, 0.0f, 0.0f };
+constexpr Vec3f kHitTip = { -1208.0f, -4080.0f, 0.0f }; // 8 units past the tip
+
+EffectBlure* LeftTrail(PlayState* play) {
+    if (sLeftTrail < 0) {
+        // as Link's sword trail
+        static EffectBlureInit2 sInit = {
+            0, 8, 0, { 255, 255, 255, 255 }, { 255, 255, 255, 64 }, { 255, 255, 255, 0 }, { 255, 255, 255, 0 }, 4,
+            0, 2, 0, { 255, 255, 255, 255 }, { 255, 255, 255, 64 }, TRAIL_TYPE_SWORDS,
+        };
+        Effect_Add(play, &sLeftTrail, EFFECT_BLURE2, 0, 0, &sInit);
+    }
+    return (EffectBlure*)Effect_GetByIndex(sLeftTrail);
+}
+
+void UpdateBlades(Player* player) {
+    PlayState* play = gPlayState;
+    sBladeHits = 0;
+    if (!sShowSwords || !HoldsSword(player) || player->meleeWeaponState == 0 || player->actor.scale.y < 0.0f ||
+        !sBladeDrawn[0] || !sBladeDrawn[1]) {
+        return;
+    }
+    bool trails = !(player->stateFlags1 & PLAYER_STATE1_SHIELDING) &&
+                  !CVarGetInteger(CVAR_ENHANCEMENT("DisableLinkSwordTrail"), 0);
+    // (as for Link's sword)
+    bool hitting = player->meleeWeaponState > 0 && (player->meleeWeaponAnimation < PLAYER_MWA_SPIN_ATTACK_1H ||
+                                                    (player->stateFlags2 & PLAYER_STATE2_SPIN_ATTACKING));
+    s32 weapon = Player_GetMeleeWeaponHeld(player);
+    // her right scimitar first: it stands in for Link's sword where the game asks where that is (feeling for walls)
+    for (s32 i = 1; i >= 0; i--) {
+        bool right = i == 1;
+        if (!right && sAttack != nullptr && !sAttack->leftBlade) {
+            continue;
+        }
+        f32 z = right ? kBladeZ : -kBladeZ;
+        Vec3f trailBase = { kTrailBase.x, kTrailBase.y, z }, trailTip = { kTrailTip.x, kTrailTip.y, z };
+        Vec3f hitBase = { kHitBase.x, kHitBase.y, z }, hitTip = { kHitTip.x, kHitTip.y, z };
+        Vec3f base, tip;
+        SkinMatrix_Vec3fMtxFMultXYZ(&sScimitarMtx[i], &trailBase, &base);
+        SkinMatrix_Vec3fMtxFMultXYZ(&sScimitarMtx[i], &trailTip, &tip);
+        WeaponInfo* trail = right ? &player->meleeWeaponInfo[0] : &sLeftTrailInfo;
+        bool fresh = trail->active == 0;
+        if (func_80090480(play, NULL, trail, &tip, &base) && trails) {
+            EffectBlure* blure =
+                right ? (EffectBlure*)Effect_GetByIndex(player->meleeWeaponEffectIndex) : LeftTrail(play);
+            if (blure != nullptr) {
+                EffectBlureShip_ChangeType(blure, (s32)sSwordTypes[weapon]);
+                if (fresh) {
+                    EffectBlure_AddSpace(blure); // not joined to the last swing's trail
+                }
+                EffectBlure_AddVertex(blure, &trail->tip, &trail->base);
+            }
+        }
+        if (hitting) {
+            SkinMatrix_Vec3fMtxFMultXYZ(&sScimitarMtx[i], &hitBase, &base);
+            SkinMatrix_Vec3fMtxFMultXYZ(&sScimitarMtx[i], &hitTip, &tip);
+            func_80090480(play, &player->meleeWeaponQuads[right ? 0 : 1], &player->meleeWeaponInfo[right ? 1 : 2],
+                          &tip, &base);
+            sBladeHits++;
+        }
+    }
+}
+
 } // namespace
+
+// For tools: her attack under way ("-" if none) and its frame, whether it's still the swing, the step B would go on
+// with and for how many frames more, and how many of her blades had a hitbox when she was last drawn.
+void PlayAsNabooru_DebugAttack(const char** name, float* frame, int* swinging, int* next, int* window, int* hitboxes) {
+    *name = (sAttack != nullptr) ? sAttack->move->name : "-";
+    *frame = sAttackFrame;
+    *swinging = sSwinging;
+    *next = sComboNext;
+    *window = sComboTimer;
+    *hitboxes = sBladeHits;
+}
 
 // For tools: the test harness logs her current move and frame.
 void PlayAsNabooru_DebugState(const char** move, float* frame) {
