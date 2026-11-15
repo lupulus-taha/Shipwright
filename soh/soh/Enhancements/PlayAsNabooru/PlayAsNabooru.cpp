@@ -1045,7 +1045,8 @@ void KeepFeetDown(Player* player) {
 //   3. the fighter's leaping spin, both blades around her, carrying her forward: the finisher
 //
 // Pressing B again during an attack goes on to the next one as soon as the blade is through; pressing it while she
-// recovers, or shortly after, does too. Otherwise the combo starts over. Link's swing action still hosts each attack
+// recovers, or shortly after, does too. Otherwise the combo starts over. The finisher ends the combo: B does nothing
+// until its swing is over, however much it is mashed. Link's swing action still hosts each attack
 // (so walls, shields, hit pauses, the lunge of a forward stab, holding B to charge a spin all work as his do), but
 // his animation no longer times it or moves her: hers does, through the VB_PLAYER_*_MELEE_* hooks. She stands her
 // ground as the Gerudo do; their animations shift her weight themselves.
@@ -1108,6 +1109,11 @@ void EndAttack() {
     sSwinging = false;
 }
 
+// The last attack of her combo is under way.
+bool IsFinisher() {
+    return sAttack == &kCombo[ARRAY_COUNT(kCombo) - 1];
+}
+
 // Link has set up an attack: if it's a slash, it becomes the next step of her combo.
 void Attack_OnStart(Player* player) {
     EndAttack();
@@ -1141,7 +1147,7 @@ bool Attack_SetWeaponState(Player* player) {
     }
     sAttackFrame += 1.0f;
     sAttackTicked = true;
-    if (CHECK_BTN_ALL(gPlayState->state.input[0].press.button, BTN_B)) {
+    if (CHECK_BTN_ALL(gPlayState->state.input[0].press.button, BTN_B) && !IsFinisher()) {
         sChainBuffered = true;
     }
     // Holding B since the attack began charges a spin attack once Link's 8-frame count runs down: hers may take
@@ -1171,6 +1177,9 @@ bool Attack_SwingFinished(Player* player, PlayState* play, bool linkDone) {
     }
     if (sAttackFrame < sAttack->swingEnd) {
         return false;
+    }
+    if (IsFinisher() && CHECK_BTN_ALL(play->state.input[0].press.button, BTN_B)) {
+        return false; // (Link's swing, over on a frame B is pressed, starts his next: hers ends a frame later)
     }
     sSwinging = false;
     sComboTimer = kComboWindow;
