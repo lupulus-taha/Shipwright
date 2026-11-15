@@ -322,6 +322,9 @@ def build_mesh():
         if upper[0][0] != lower[4][0]:  # (between muzzle rings: the mouth, on both sides)
             mesh.face([(upper[4][0], inside), (top[4][0], inside), (under[0][0], inside), (lower[0][0], inside)], FACE)
             mesh.face([(lower[4][0], inside), (under[4][0], inside), (top[0][0], inside), (upper[0][0], inside)], FACE)
+        else:  # (behind them: the corners of the mouth)
+            mesh.face([(upper[4][0], inside), (top[4][0], inside), (under[0][0], inside)], FACE)
+            mesh.face([(lower[4][0], inside), (under[4][0], inside), (top[0][0], inside)], FACE)
         upper, lower = top, under
     nose = face_ring(mesh, [mesh.vertex(NOSE_TIP[0], NOSE_TIP[1], 0, "Head")])[0]
     chin = face_ring(mesh, [mesh.vertex(CHIN_TIP[0], CHIN_TIP[1], 0, "Jaw")])[0]
