@@ -444,7 +444,7 @@ class Rider:
         if name == "RideGallop":
             rock = wave(t, 0.95)  # the camel's own pitching
             lift = wave(t, 0.2)
-            return replace(sit, root=(0.0, seat_y + 4.6 + 0.9 * lift, seat_z - 1.2), pitch=12 - 3.4 * rock,
+            return replace(sit, root=(0.0, seat_y + 4.6 + 0.9 * lift, seat_z - 1.4), pitch=17 - 3.4 * rock,
                            torso=(13.0 + 4.0 * wave(t, 0.3), 0.0, 0.0), head=(-22.0 - 3.0 * wave(t, 0.4), 0.0, 0.0),
                            hands=both_hands, elbows=both_elbows, toes={"L": (22.0, 10.0), "R": (22.0, -10.0)},
                            **legs(-2.5 + 1.2 * rock, -2.5 + 1.2 * rock, 1.6))

@@ -1416,7 +1416,7 @@ void EnHorse_MountedGallop(EnHorse* this, PlayState* play) {
     if (this->noInputTimer <= 0.0f) {
         // (the camel needs no spurring on: given its head, it works up to its full speed by itself)
         EnHorse_UpdateSpeed(this, play, 0.3f, -0.5f, 10.0f, 0.06f,
-                            this->type == HORSE_CAMEL ? CAMEL_TOP_SPEED : 8.0f, 0x190);
+                            this->type == HORSE_CAMEL ? CAMEL_GALLOP_SPEED : 8.0f, 0x190);
     } else if (this->noInputTimer > 0.0f) {
         this->noInputTimer -= 1;
         this->actor.speedXZ = 8.0f;

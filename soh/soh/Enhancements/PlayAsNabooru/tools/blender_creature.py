@@ -461,6 +461,11 @@ def make_actions(rig, armature, animations):
 # ---------------------------------------------------------------- preview
 def render_previews(folder, views, columns=2, target=(0.0, -0.4, 2.0), span=7.6, size=(560, 420)):
     """views: [(name, azimuth, elevation, frame)]; pictures whose names start alike (up to "_") share a sheet"""
+    only = os.environ.get("CREATURE_SHEETS")  # for a quick look: only these sheets (names, comma separated)
+    if only:
+        views = [view for view in views if view[0].split("_")[0] in only.split(",")]
+        if not views:
+            return
     scene = bpy.context.scene
     engines = {e.identifier for e in type(scene.render).bl_rna.properties["engine"].enum_items}
     scene.render.engine = "BLENDER_EEVEE" if "BLENDER_EEVEE" in engines else "BLENDER_EEVEE_NEXT"

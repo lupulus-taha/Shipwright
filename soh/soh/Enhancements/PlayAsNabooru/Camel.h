@@ -21,11 +21,14 @@ struct EnHorse;
 #define ENHORSE_PARAM_CAMEL 0x4000
 
 // How it handles. It is not spurred on (no carrots): held at a gallop it works up to its full speed by itself, a
-// little short of Epona's when she is spurred on (14, falling back to 8), but it is heavier than she is: it gathers
+// little short of Epona's when she is spurred on (14, falling back to 8.9), but it is heavier than she is: it gathers
 // speed more slowly (she gains 0.5 a frame), most slowly near its full speed, takes longer to slow down and to stop,
-// and turns less sharply. Speeds are in units a frame.
+// and turns less sharply. From a standstill it is at full speed in a good 2 seconds (measured; Epona, spurred on at
+// once and kept at it, is at hers in about 1). Speeds are in units a frame.
 #define CAMEL_TOP_SPEED 13.0f
-#define CAMEL_ACCELERATION(speed) (0.4f - 0.2f * (speed) / CAMEL_TOP_SPEED)
+// (with the stick pushed all the way, En_Horse goes 60/54 of the speed its gait is given)
+#define CAMEL_GALLOP_SPEED (CAMEL_TOP_SPEED * 54.0f / 60.0f)
+#define CAMEL_ACCELERATION(speed) (0.55f - 0.25f * (speed) / CAMEL_TOP_SPEED)
 #define CAMEL_DECELERATION 0.3f
 #define CAMEL_TURNING 0.85f // of how fast Epona turns
 // Reined in from a gallop it digs in: it loses this much speed a frame (Epona 0.6) and stands still from this frame
