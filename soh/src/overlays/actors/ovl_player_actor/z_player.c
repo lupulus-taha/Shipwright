@@ -16,6 +16,7 @@
 #include "overlays/actors/ovl_En_Elf/z_en_elf.h"
 #include "overlays/actors/ovl_En_Fish/z_en_fish.h"
 #include "overlays/actors/ovl_En_Horse/z_en_horse.h"
+#include "soh/Enhancements/PlayAsNabooru/Camel.h"
 #include "overlays/effects/ovl_Effect_Ss_Fhg_Flash/z_eff_ss_fhg_flash.h"
 #include "overlays/misc/ovl_kaleido_scope/z_kaleido_scope.h"
 #include "objects/gameplay_keep/gameplay_keep.h"
@@ -7193,6 +7194,11 @@ s32 Player_ActionHandler_3(Player* this, PlayState* play) {
 
         Actor_MountHorse(play, this, &rideActor->actor);
         Player_AnimPlayOnce(play, this, D_80854578[temp].anim);
+        if (rideActor->type == HORSE_CAMEL) {
+            // The Play as Nabooru mod's camel is climbed onto as it lies, then gets up: that takes longer than
+            // vaulting onto Epona (animations advance 1.5 frames a frame).
+            this->skelAnime.playSpeed = Animation_GetLastFrame(D_80854578[temp].anim) / (1.5f * CAMEL_MOUNT_FRAMES);
+        }
         Player_StartAnimMovement(play, this, 0x9B);
         this->actor.parent = this->rideActor;
         func_80832224(this);
@@ -13453,6 +13459,11 @@ s32 func_8084C9BC(Player* this, PlayState* play) {
                 Player_AnimPlayOnce(play, this,
                                     (this->mountSide < 0) ? &gPlayerAnim_link_uma_left_down
                                                           : &gPlayerAnim_link_uma_right_down);
+                if (rideActor->type == HORSE_CAMEL) {
+                    // (the camel lies down first)
+                    this->skelAnime.playSpeed =
+                        Animation_GetLastFrame(this->skelAnime.animation) / (1.5f * CAMEL_DISMOUNT_FRAMES);
+                }
                 return 1;
             }
         }

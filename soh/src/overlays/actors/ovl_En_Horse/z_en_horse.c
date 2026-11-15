@@ -974,6 +974,9 @@ void EnHorse_StartGalloping(EnHorse* this);
 
 void EnHorse_Frozen(EnHorse* this, PlayState* play) {
     this->actor.speedXZ = 0.0f;
+    if (this->type == HORSE_CAMEL) {
+        Camel_Frozen(this);
+    }
     this->noInputTimer--;
     if (this->noInputTimer < 0) {
         this->cyl1.base.ocFlags1 |= OC1_ON;
@@ -1820,6 +1823,12 @@ void EnHorse_Inactive(EnHorse* this, PlayState* play2) {
 void EnHorse_PlayIdleAnimation(EnHorse* this, s32 anim, f32 morphFrames, f32 startFrame) {
     this->action = ENHORSE_ACT_IDLE;
     this->actor.speedXZ = 0.0f;
+    if (this->type == HORSE_CAMEL) {
+        // a camel left alone lies down
+        this->animationIdx = ENHORSE_ANIM_IDLE;
+        Camel_Lie(this);
+        return;
+    }
     if (anim != ENHORSE_ANIM_IDLE && anim != ENHORSE_ANIM_WHINNEY && anim != ENHORSE_ANIM_REARING) {
         anim = ENHORSE_ANIM_IDLE;
     }
@@ -1867,6 +1876,13 @@ void EnHorse_StartMovingAnimation(EnHorse* this, s32 arg1, f32 arg2, f32 arg3);
 void EnHorse_Idle(EnHorse* this, PlayState* play) {
     this->actor.speedXZ = 0.0f;
     EnHorse_IdleAnimSounds(this, play);
+
+    if (this->type == HORSE_CAMEL) {
+        // it waits lying down (and does not come when Epona is called)
+        this->actor.speedXZ = 0.0f;
+        Camel_Rest(this);
+        return;
+    }
 
     if (DREG(53) && this->type == HORSE_EPONA) {
         DREG(53) = 0;
@@ -3081,6 +3097,10 @@ void EnHorse_MountDismount(EnHorse* this, PlayState* play) {
     if (this->playerControlled == false && Actor_IsMounted(play, &this->actor) == true) {
         this->noInputTimer = 55;
         this->noInputTimerMax = 55;
+        if (this->type == HORSE_CAMEL) {
+            // (its rider climbs on as it lies, then it gets up)
+            this->noInputTimer = this->noInputTimerMax = CAMEL_MOUNT_FRAMES + 2;
+        }
         this->playerControlled = 1;
         EnHorse_Freeze(this);
     } else if (this->playerControlled == true && Actor_NotMounted(play, &this->actor) == true) {
@@ -3563,7 +3583,10 @@ void EnHorse_Update(Actor* thisx, PlayState* play2) {
         }
     }
 
-    sActionFuncs[this->action](this, play);
+    // (a camel lies down to let its rider off)
+    if (this->type != HORSE_CAMEL || !Camel_Kneeling(this, play)) {
+        sActionFuncs[this->action](this, play);
+    }
     this->stateFlags &= ~ENHORSE_OBSTACLE;
     this->curFrame = this->skin.skelAnime.curFrame;
     this->lastPos = thisx->world.pos;

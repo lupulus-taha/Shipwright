@@ -15,7 +15,7 @@ writes C), which does not have to be installed, only present on disk:
 --preview renders contact sheets of the model and of every animation; set the environment variable CREATURE_REPORT
 to an animation's name (Idle, Walk, Pace, ...) to print what each leg does on each of its frames.
 
-In the style of the N64 game: about 500 triangles, one flex skeleton of 26 limbs with every vertex on a single limb,
+In the style of the N64 game: about 650 triangles, one flex skeleton of 26 limbs with every vertex on a single limb,
 three small 16-bit textures (coat 32x64, face 64x32, saddle cloth 32x32, each within the console's 4 KB texture
 memory), lit and fogged like the game's own creatures. The game plays these animations in place of Epona's
 (z_en_horse.c): those that Link's hidden riding animation is stepped along with must not be longer than hers.
@@ -42,55 +42,59 @@ SKELETON = "gCamelSkel"
 SIZE = 0.9  # game units per unit of the numbers below
 
 # ---------------------------------------------------------------- shape
-SIDE = 8.5  # how far the legs stand from the middle
+SIDE = 8.0  # how far the legs stand from the middle
 
-# body, back to front: (f, top, bottom, half width); the first is closed off under the tail
-TORSO = [(-36.0, 69.0, 52.0, 6.5), (-29.0, 75.0, 46.0, 12.5), (-10.0, 77.0, 42.0, 14.0), (10.0, 76.0, 39.0, 13.5),
-         (23.0, 73.0, 42.0, 10.5)]
+# body, back to front: (f, top, bottom, half width); the first is closed off under the tail. A camel's: a deep chest,
+# the belly tucked up towards the hind legs, the rump sloping down to a low tail.
+TORSO = [(-37.0, 63.0, 51.0, 5.5), (-30.0, 72.0, 49.0, 11.5), (-12.0, 76.0, 44.0, 13.5), (10.0, 75.0, 37.0, 13.0),
+         (23.0, 72.0, 40.0, 10.0)]
 # chest front, the long neck, back of the skull: (f, u) of the middle, tilt of the ring in degrees, half height, half
-# width, limb, how far down the coat texture the top of the ring starts (the dark wool of its back thins out up the neck)
-NECK = [((27.0, 57.0), 10, 11.0, 7.5, "Root", 0.0), ((35.0, 56.0), 25, 8.5, 6.0, "Neck1", 0.06),
-        ((43.0, 62.0), 55, 6.8, 5.0, "Neck1", 0.1), ((47.5, 76.0), 85, 5.6, 4.4, "Neck2", 0.12),
-        ((48.0, 92.0), 82, 5.2, 4.2, "Head", 0.16)]
-# head: crown, eyes, muzzle, lips
-HEAD = [((52.0, 96.5), 35, 6.0, 5.0), ((57.5, 95.5), 5, 5.2, 4.3), ((64.0, 93.0), -6, 4.1, 3.4),
-        ((69.0, 91.2), -12, 3.4, 3.0)]
-NOSE_TIP = (71.0, 90.4)
-# lower jaw: (f, top, bottom, half width); its top is the line of the mouth
-JAW = [(56.0, 90.6, 86.8, 3.2), (62.5, 89.4, 86.8, 2.7), (68.8, 88.2, 87.0, 2.1)]
+# width, limb, how far down the coat texture the top of the ring starts (the dark wool of its back thins out up the
+# neck). The neck leaves the chest low, dips, and rises straight up to a head carried high.
+NECK = [((27.0, 54.0), 5, 11.5, 7.5, "Root", 0.0), ((36.0, 50.5), 8, 8.2, 5.8, "Neck1", 0.05),
+        ((44.5, 53.5), 45, 6.2, 4.8, "Neck1", 0.08), ((49.5, 65.0), 80, 5.2, 4.2, "Neck2", 0.1),
+        ((50.5, 79.0), 92, 4.5, 3.8, "Neck2", 0.12), ((50.0, 92.0), 85, 4.3, 3.7, "Head", 0.16)]
+# head, its nose a little in the air: crown, eyes, then the muzzle, whose lower part is the jaw's (MUZZLE rings)
+HEAD = [((53.5, 96.8), 40, 5.2, 4.4), ((58.5, 97.4), 12, 4.6, 3.8)]
+MUZZLE = [((64.0, 97.6), 4, 3.7, 3.1), ((68.5, 97.6), -2, 3.2, 2.8)]
+LIPS = -0.3  # where the mouth runs on a muzzle ring, between its middle (0) and its underside (-1)
+NOSE_TIP, CHIN_TIP = (70.8, 96.95), (70.4, 96.45)
 # ears (left): three points at the base and the tip, as (f, u, s)
-EAR = {"front": (51.5, 100.5, 3.2), "outer": (49.0, 99.0, 4.6), "inner": (48.6, 101.0, 2.6), "tip": (47.4, 105.5, 5.8)}
+EAR = {"front": (52.5, 100.4, 3.0), "outer": (50.2, 99.2, 4.2), "inner": (49.8, 100.8, 2.4), "tip": (48.6, 104.6, 5.2)}
 # tail: (f, u) of the middle and radius; the last is the tip of its tuft
-TAIL = [((-36.0, 66.5), 1.5, "Tail1"), ((-39.0, 59.0), 1.5, "Tail1"), ((-40.5, 50.0), 1.2, "Tail2"),
-        ((-41.0, 42.5), 2.0, "Tail2"), ((-41.0, 37.0), 0.0, "Tail2")]
-# legs (left): a point inside the body, then rings (f, u, half depth, half width, limb) down to the pad of the foot
+TAIL = [((-37.0, 61.0), 1.3, "Tail1"), ((-39.5, 54.0), 1.3, "Tail1"), ((-40.5, 46.0), 1.1, "Tail2"),
+        ((-41.0, 39.0), 1.8, "Tail2"), ((-41.0, 34.5), 0.0, "Tail2")]
+# legs (left): a point inside the body, then rings (f, u, half depth, half width, limb) down to the pad of the foot:
+# thin, with knobs for knees and hocks, on broad pads
 FRONT_LEG = {"top": (18.0, 62.0, SIDE),
-             "rings": [(17.5, 54.0, 5.5, 4.0, "A"), (16.8, 44.0, 3.9, 3.2, "B"), (17.3, 27.0, 3.1, 2.7, "B"),
-                       (17.6, 6.5, 2.2, 2.1, "C"), (18.6, 3.2, 3.8, 3.4, "D")],
-             "sole": (23.4, 14.4, 3.7), "limbs": "FrontLeg%s%s"}
-HIND_LEG = {"top": (-27.0, 66.0, SIDE),
-            "rings": [(-26.0, 58.0, 8.0, 4.6, "A"), (-22.0, 45.0, 5.6, 3.6, "A"), (-24.0, 39.0, 4.0, 3.0, "B"),
-                      (-32.0, 26.0, 2.9, 2.5, "B"), (-30.5, 6.5, 2.1, 2.0, "C"), (-29.4, 3.2, 3.7, 3.3, "D")],
-            "sole": (-24.8, -33.4, 3.6), "limbs": "HindLeg%s%s"}
-# the saddle: a rug over the hump, from its fringe on the flanks up to the seat, at these stations along the back:
-# (f, height of the top, half width of the top); the first and last lie on the back itself
-SADDLE = [(-21.0, None, 5.5), (-15.0, 86.0, 7.2), (-10.0, 88.5, 8.0), (-1.0, 88.5, 8.0), (4.0, 86.0, 7.2),
-          (10.0, None, 5.5)]
+             "rings": [(17.5, 54.0, 5.2, 3.8, "A"), (16.8, 44.0, 3.4, 2.9, "B"), (17.1, 31.5, 2.4, 2.2, "B"),
+                       (17.3, 27.0, 3.3, 2.9, "B"), (17.5, 22.5, 2.2, 2.0, "C"), (17.6, 6.5, 2.0, 1.9, "C"),
+                       (18.8, 3.2, 4.4, 3.9, "D")],
+             "sole": (24.6, 13.8, 4.2), "limbs": "FrontLeg%s%s"}
+HIND_LEG = {"top": (-28.0, 64.0, SIDE),
+            "rings": [(-27.0, 57.0, 7.0, 4.2, "A"), (-22.5, 46.0, 4.6, 3.3, "A"), (-24.0, 40.0, 3.4, 2.7, "B"),
+                      (-30.5, 29.5, 2.3, 2.1, "B"), (-32.4, 25.5, 3.0, 2.6, "B"), (-31.5, 21.0, 2.1, 1.9, "C"),
+                      (-30.5, 6.5, 2.0, 1.9, "C"), (-29.2, 3.2, 4.3, 3.8, "D")],
+            "sole": (-23.6, -34.0, 4.1), "limbs": "HindLeg%s%s"}
+# the hump: (f, height of its top) along the back; the first and last lie on the back itself
+HUMP = [(-24.0, None), (-18.0, 85.0), (-12.0, 91.5), (-6.0, 94.0), (0.0, 91.5), (6.0, 85.0), (11.0, None)]
+# the saddle: a rug over the top of the hump, hanging down the flanks to its fringe, between these places along it
+SADDLE = [-13.0, -9.5, -6.0, -2.5, 1.0]
 # its two horns, front and back: (f, u) of the foot and of the top, half thickness at each
-HORNS = [((5.0, 84.5), (6.2, 94.0), 1.5, 1.0), ((-15.5, 84.5), (-16.9, 93.0), 1.5, 1.0)]
+HORNS = [((2.6, 88.6), (4.2, 98.5), 1.4, 0.9), ((-14.6, 88.6), (-16.2, 98.0), 1.4, 0.9)]
 # where the rider sits: the middle of the seat (the game and camel_rider.py place Nabooru by this)
-SEAT = (-5.5, 88.5)
+SEAT = (-6.0, 94.7)
 
 # skeleton: limb -> (parent, joint (f, u, s), where its bone points). Limbs come out in the game in LIMB_ORDER (every
 # limb's children sorted by name), which the enum in Camel.cpp repeats.
 BONES = {
-    "Root": (None, (-26.0, 62.0, 0), (10.0, 62.0, 0)),
-    "Neck1": ("Root", (26.0, 57.0, 0), (44.0, 63.0, 0)),
-    "Neck2": ("Neck1", (44.5, 64.0, 0), (48.0, 91.0, 0)),
-    "Head": ("Neck2", (48.0, 91.0, 0), (62.0, 93.0, 0)),
-    "EarL": ("Head", (49.8, 100.2, 3.4), (47.4, 105.5, 5.8)),
-    "EarR": ("Head", (49.8, 100.2, -3.4), (47.4, 105.5, -5.8)),
-    "Jaw": ("Head", (54.0, 90.0, 0), (69.0, 87.6, 0)),
+    "Root": (None, (-28.0, 62.0, 0), (10.0, 62.0, 0)),
+    "Neck1": ("Root", (26.0, 54.0, 0), (45.0, 53.0, 0)),
+    "Neck2": ("Neck1", (46.0, 55.0, 0), (50.0, 91.0, 0)),
+    "Head": ("Neck2", (50.0, 91.5, 0), (63.0, 96.0, 0)),
+    "EarL": ("Head", (50.8, 100.2, 3.2), (48.6, 104.6, 5.2)),
+    "EarR": ("Head", (50.8, 100.2, -3.2), (48.6, 104.6, -5.2)),
+    "Jaw": ("Head", (58.5, 94.4, 0), (69.5, 95.2, 0)),
     "FrontLegLA": ("Root", (19.0, 58.0, SIDE), (16.5, 46.0, SIDE)),
     "FrontLegLB": ("FrontLegLA", (16.5, 46.0, SIDE), (17.3, 27.0, SIDE)),
     "FrontLegLC": ("FrontLegLB", (17.3, 27.0, SIDE), (17.6, 6.5, SIDE)),
@@ -99,19 +103,19 @@ BONES = {
     "FrontLegRB": ("FrontLegRA", (16.5, 46.0, -SIDE), (17.3, 27.0, -SIDE)),
     "FrontLegRC": ("FrontLegRB", (17.3, 27.0, -SIDE), (17.6, 6.5, -SIDE)),
     "FrontLegRD": ("FrontLegRC", (17.6, 6.5, -SIDE), (21.0, 1.0, -SIDE)),
-    "HindLegLA": ("Root", (-23.0, 64.0, SIDE), (-16.0, 45.0, SIDE)),
-    "HindLegLB": ("HindLegLA", (-16.0, 45.0, SIDE), (-27.0, 26.0, SIDE)),
-    "HindLegLC": ("HindLegLB", (-27.0, 26.0, SIDE), (-25.5, 6.5, SIDE)),
-    "HindLegLD": ("HindLegLC", (-25.5, 6.5, SIDE), (-22.0, 1.0, SIDE)),
-    "HindLegRA": ("Root", (-23.0, 64.0, -SIDE), (-16.0, 45.0, -SIDE)),
-    "HindLegRB": ("HindLegRA", (-16.0, 45.0, -SIDE), (-27.0, 26.0, -SIDE)),
-    "HindLegRC": ("HindLegRB", (-27.0, 26.0, -SIDE), (-25.5, 6.5, -SIDE)),
-    "HindLegRD": ("HindLegRC", (-25.5, 6.5, -SIDE), (-22.0, 1.0, -SIDE)),
+    "HindLegLA": ("Root", (-28.0, 64.0, SIDE), (-21.0, 45.0, SIDE)),
+    "HindLegLB": ("HindLegLA", (-21.0, 45.0, SIDE), (-32.0, 26.0, SIDE)),
+    "HindLegLC": ("HindLegLB", (-32.0, 26.0, SIDE), (-30.5, 6.5, SIDE)),
+    "HindLegLD": ("HindLegLC", (-30.5, 6.5, SIDE), (-27.0, 1.0, SIDE)),
+    "HindLegRA": ("Root", (-28.0, 64.0, -SIDE), (-21.0, 45.0, -SIDE)),
+    "HindLegRB": ("HindLegRA", (-21.0, 45.0, -SIDE), (-32.0, 26.0, -SIDE)),
+    "HindLegRC": ("HindLegRB", (-32.0, 26.0, -SIDE), (-30.5, 6.5, -SIDE)),
+    "HindLegRD": ("HindLegRC", (-30.5, 6.5, -SIDE), (-27.0, 1.0, -SIDE)),
     # no geometry: this limb stands where the model's own axes are while the camel is at rest, and is carried along
     # by its body. The game takes the rider's place from it (a bone pointing up has the game's model axes).
     "Seat": ("Root", (0.0, 0.0, 0), (0.0, 10.0, 0)),
-    "Tail1": ("Root", (-36.0, 67.0, 0), (-39.8, 54.0, 0)),
-    "Tail2": ("Tail1", (-39.8, 54.0, 0), (-41.0, 37.0, 0)),
+    "Tail1": ("Root", (-37.0, 61.5, 0), (-40.2, 50.0, 0)),
+    "Tail2": ("Tail1", (-40.2, 50.0, 0), (-41.0, 34.5, 0)),
 }
 LIMB_ORDER = ["Root", "FrontLegLA", "FrontLegLB", "FrontLegLC", "FrontLegLD", "FrontLegRA", "FrontLegRB", "FrontLegRC",
               "FrontLegRD", "HindLegLA", "HindLegLB", "HindLegLC", "HindLegLD", "HindLegRA", "HindLegRB", "HindLegRC",
@@ -130,12 +134,14 @@ FACE_SIZE = (64, 32)
 CLOTH_SIZE = (32, 32)
 COAT_TEXELS = 0.8  # coat texture pixels per unit, along the body
 # face texture: the head seen from the side, from (f, u) top left to bottom right
-FACE_FROM, FACE_TO = (43.0, 105.5), (72.0, 85.5)
-EYE = (57.2, 97.8)  # middle of the eye
-NOSTRIL = (68.3, 92.3)
-HALTER = (63.2, 92.7)  # its ring, on the cheek
+FACE_FROM, FACE_TO = (45.0, 104.0), (72.0, 90.0)
+EYE = (58.8, 99.3)  # middle of the eye
+NOSTRIL = (69.0, 98.7)
+HALTER = (64.3, 96.8)  # its ring, on the cheek
 
 BLACK, UMBER, BROWN = (34, 26, 22), (92, 64, 40), (140, 100, 60)
+MOUTH = (70, 26, 30)  # the inside of its mouth
+MOUTH_AT = (1.5, 1.5)  # the corner of the face texture kept for it
 TAN, SAND, GOLD = (188, 146, 92), (208, 170, 114), (222, 188, 128)
 CREAM, PALE = (234, 212, 166), (244, 230, 196)
 # the saddle's colours are the Gerudo's
@@ -166,57 +172,50 @@ def face_at(f, u):
             (u - FACE_FROM[1]) / (FACE_TO[1] - FACE_FROM[1]) * FACE_SIZE[1])
 
 
-def lips_at(f):
-    """height of the line of the mouth"""
-    (f0, top0, _, _), (f1, top1, _, _), (f2, top2, _, _) = JAW
-    return top0 + (top1 - top0) * (f - f0) / (f1 - f0) if f < f1 else top1 + (top2 - top1) * (f - f1) / (f2 - f1)
-
-
 def face_pixel(x, y):
-    """the head from the side (both sides use it): sandy, a woolly crown, a pale soft muzzle with a slit of a nostril
-    and a drooping lip, a big dark heavy-lidded eye with long lashes, and a red Gerudo halter with a brass ring"""
+    """the head from the side (both sides use it): sandy, a woolly crown, a pale soft muzzle with a slit of a nostril,
+    a big dark heavy-lidded eye with long lashes, and a red Gerudo halter with a brass ring. (The mouth is not painted:
+    it is where the jaw meets the head, see build_mesh.)"""
+    if x < 3 and y < 3:
+        return MOUTH
     f = FACE_FROM[0] + (x + 0.5) / FACE_SIZE[0] * (FACE_TO[0] - FACE_FROM[0])
     u = FACE_FROM[1] + (y + 0.5) / FACE_SIZE[1] * (FACE_TO[1] - FACE_FROM[1])
     streak, fine = noise(x // 2, y, 11), noise(x, y, 12)
     tone = mix(SAND, TAN, streak * 0.8) if streak < 0.75 else mix(SAND, GOLD, 0.6)
     # the crown and the back of the head take up the neck's dark wool
-    crown = 100.8 - 0.1 * (f - 48.0) - (max(0.0, f - 55.5)) * 0.9
-    if u > crown + 0.6 * (noise(x, 13) - 0.5) and f < 58.5:
+    crown = 100.7 - 0.05 * (f - 50.0) - (max(0.0, f - 56.5)) * 0.9
+    if u > crown + 0.5 * (noise(x, 13) - 0.5) and f < 59.5:
         tone = mix(UMBER, BROWN, streak)
-    if f < 47.5:
-        tone = mix(tone, BROWN, 0.5 * min(1.0, (47.5 - f) / 2.0))
-    # pale throat and muzzle
-    if f > 61.5:
-        tone = mix(tone, mix(CREAM, PALE, streak), min(1.0, (f - 61.5) / 3.5) * 0.85)
-    lips = lips_at(max(f, JAW[0][0]))
-    if u < lips - 0.4 and f > JAW[0][0]:
-        tone = mix(tone, CREAM, 0.6)
-    # mouth: a dark line, the upper lip hanging over it at the front
-    if f > JAW[0][0] + 1.0 and abs(u - lips - (0.3 if f > 67.0 else 0.0)) < 0.3:
-        tone = mix(tone, BLACK, 0.8)
+    if f < 49.5:
+        tone = mix(tone, BROWN, 0.5 * min(1.0, (49.5 - f) / 2.0))
+    # pale muzzle, lips and chin
+    if f > 62.5:
+        tone = mix(tone, mix(CREAM, PALE, streak), min(1.0, (f - 62.5) / 3.0) * 0.85)
+    if u < 95.6 and f > 58.0:
+        tone = mix(tone, CREAM, 0.5)
     # nostril: a slanted slit
     nx, ny = f - NOSTRIL[0], u - NOSTRIL[1]
-    if abs(ny - 0.45 * nx) < 0.36 and abs(nx) < 1.2:
+    if abs(ny - 0.45 * nx) < 0.3 and abs(nx) < 1.0:
         tone = mix(tone, BLACK, 0.85)
     # halter: a band round the muzzle, a strap along the cheek to behind the ear, a ring where they meet
-    band = abs(f - HALTER[0] - 0.12 * (u - HALTER[1])) < 0.6
-    strap = 47.0 < f < HALTER[0] and abs(u - (HALTER[1] + 0.3 + (HALTER[0] - f) * 0.36)) < 0.5
-    if (band and u > lips + 0.2) or strap:
+    band = abs(f - HALTER[0] - 0.1 * (u - HALTER[1])) < 0.5
+    strap = 49.0 < f < HALTER[0] and abs(u - (HALTER[1] + 0.2 + (HALTER[0] - f) * 0.22)) < 0.42
+    if band or strap:
         tone = RED if fine > 0.2 else DARK_RED
-    if (f - HALTER[0]) ** 2 + ((u - HALTER[1]) * 1.2) ** 2 < 1.0:
+    if (f - HALTER[0]) ** 2 + ((u - HALTER[1]) * 1.1) ** 2 < 0.8:
         tone = BRASS if fine > 0.25 else (160, 120, 40)
     # eye: a dark almond under a heavy pale lid with a fringe of lashes, a glint
     ex, ey = f - EYE[0], u - EYE[1]
-    almond = (ex / 1.6) ** 2 + (ey / 0.95) ** 2
+    almond = (ex / 1.45) ** 2 + (ey / 0.85) ** 2
     if almond < 1.7 and ey > -0.2:
         tone = mix(tone, PALE, 0.55)  # the lid
     if almond < 1.0:
-        tone = BLACK if ey < 0.28 else mix(UMBER, BLACK, 0.5)
-        if -0.9 < ex < -0.3 and -0.05 < ey < 0.4:
+        tone = BLACK if ey < 0.3 else mix(UMBER, BLACK, 0.5)
+        if -0.8 < ex < -0.3 and -0.05 < ey < 0.35:
             tone = (250, 250, 240)
-    if abs(ey - 0.4 + 0.1 * ex * ex) < 0.26 and abs(ex) < 2.0:
+    if abs(ey - 0.35 + 0.11 * ex * ex) < 0.24 and abs(ex) < 1.8:
         tone = mix(tone, BLACK, 0.85)  # lashes along the lid's edge
-    if abs(ex) < 1.9 and 1.4 < ey + 0.1 * ex < 1.8:
+    if abs(ex) < 1.7 and 1.25 < ey + 0.1 * ex < 1.6:
         tone = mix(tone, BROWN, 0.5)  # brow
     return tone
 
@@ -296,25 +295,41 @@ def build_mesh():
     for a, b in zip(rings, rings[1:]):
         mesh.loft(a, b, COAT)
 
-    # --- head
+    # --- head. Its muzzle is one skin too, but the underside of it belongs to the jaw: where the two meet runs the
+    # mouth, a narrow dark strip that opens when the jaw drops (and the cheeks behind it stretch).
     rings = [face_ring(mesh, skull)]
     for centre, tilt, half_height, half_width in HEAD:
         rings.append(face_ring(mesh, mesh.tilted_ring(centre, tilt, half_height, half_width, "Head")))
     for a, b in zip(rings, rings[1:]):
         mesh.loft(a, b, FACE)
-    tip = face_ring(mesh, [mesh.vertex(NOSE_TIP[0], NOSE_TIP[1], 0, "Head")])[0]
-    for i in range(8):
-        mesh.face([rings[-1][i], rings[-1][(i + 1) % 8], tip], FACE)
+    inside = (MOUTH_AT[0] / FACE_SIZE[0], MOUTH_AT[1] / FACE_SIZE[1])
+    # each ring so far, split like a muzzle ring: over the top from the right lip to the left, and under from left to right
+    eyes = rings[-1]
+    upper, lower = [eyes[6], eyes[7], eyes[0], eyes[1], eyes[2]], [eyes[2], eyes[3], eyes[4], eyes[5], eyes[6]]
+    for (cf, cu), tilt, half_height, half_width in MUZZLE:
+        t = math.radians(tilt)
+        up = (-math.sin(t), math.cos(t))
 
-    # --- lower jaw: a wedge under the muzzle
-    rings = []
-    for f, top, bottom, width in JAW:
-        rings.append(face_ring(mesh, [mesh.vertex(f, top, width, "Jaw"), mesh.vertex(f, bottom, 0, "Jaw"),
-                                      mesh.vertex(f, top, -width, "Jaw")]))
-    for a, b in zip(rings, rings[1:]):
-        mesh.loft(a, b, FACE)
-    mesh.face(rings[-1][::-1], FACE)
-    mesh.face(rings[0], FACE)
+        def at(a, b, limb, drop=0.0):
+            return mesh.vertex(cf + up[0] * half_height * b, cu + up[1] * half_height * b - drop, half_width * a, limb)
+
+        top = face_ring(mesh, [at(-0.96, LIPS, "Head"), at(-0.74, 0.72, "Head"), at(0.0, 1.0, "Head"),
+                               at(0.74, 0.72, "Head"), at(0.96, LIPS, "Head")])
+        under = face_ring(mesh, [at(0.94, LIPS, "Jaw", 0.3), at(0.62, -0.72, "Jaw"), at(0.0, -1.0, "Jaw"),
+                                 at(-0.62, -0.72, "Jaw"), at(-0.94, LIPS, "Jaw", 0.3)])
+        mesh.loft(upper, top, FACE, closed=False)
+        mesh.loft(lower, under, FACE, closed=False)
+        if upper[0][0] != lower[4][0]:  # (between muzzle rings: the mouth, on both sides)
+            mesh.face([(upper[4][0], inside), (top[4][0], inside), (under[0][0], inside), (lower[0][0], inside)], FACE)
+            mesh.face([(lower[4][0], inside), (under[4][0], inside), (top[0][0], inside), (upper[0][0], inside)], FACE)
+        upper, lower = top, under
+    nose = face_ring(mesh, [mesh.vertex(NOSE_TIP[0], NOSE_TIP[1], 0, "Head")])[0]
+    chin = face_ring(mesh, [mesh.vertex(CHIN_TIP[0], CHIN_TIP[1], 0, "Jaw")])[0]
+    for i in range(4):
+        mesh.face([upper[i], upper[i + 1], nose], FACE)
+        mesh.face([lower[i], lower[i + 1], chin], FACE)
+    mesh.face([(upper[4][0], inside), (nose[0], inside), (chin[0], inside), (lower[0][0], inside)], FACE)
+    mesh.face([(lower[4][0], inside), (chin[0], inside), (nose[0], inside), (upper[0][0], inside)], FACE)
 
     # --- ears: small, open towards the front and the side
     for side, limb in ((1, "EarL"), (-1, "EarR")):
@@ -376,16 +391,43 @@ def build_mesh():
                 mesh.loft(b, a, COAT)
             mesh.face(rings[-1], COAT)  # sole
 
-    # --- saddle: the rug over the hump, hanging down the flanks (an open sheet: only its outside is ever seen)
+    # --- hump: a woolly mound on the back
+    def hump_at(f):
+        """-> height of the hump's top at f"""
+        for (f0, p0), (f1, p1) in zip(HUMP, HUMP[1:]):
+            if f <= f1:
+                p0 = torso_at(f0)[0] if p0 is None else p0
+                p1 = torso_at(f1)[0] if p1 is None else p1
+                return p0 + (p1 - p0) * (f - f0) / (f1 - f0)
+        return torso_at(f)[0]
+
+    def hump_points(f, out=0.0):
+        """-> its cross-section at f, left side: (s, u) at its foot on the back and halfway up; and its top"""
+        top, _, width = torso_at(f)
+        peak = max(hump_at(f), top + 0.4)
+        return [(0.66 * width + out, top - 1.4), (0.5 * width + out, top + 0.74 * (peak - top) + out * 0.5)], peak + out
+
+    rings = []
+    for f, _ in HUMP:
+        (foot, half), peak = hump_points(f)
+        along = f * COAT_TEXELS / COAT_SIZE[0]
+        rings.append([(mesh.vertex(f, foot[1], foot[0], "Root"), (along, 0.2)),
+                      (mesh.vertex(f, half[1], half[0], "Root"), (along, 0.1)),
+                      (mesh.vertex(f, peak, 0.0, "Root"), (along, 0.02)),
+                      (mesh.vertex(f, half[1], -half[0], "Root"), (along, 0.1)),
+                      (mesh.vertex(f, foot[1], -foot[0], "Root"), (along, 0.2))])
+    for a, b in zip(rings, rings[1:]):
+        mesh.loft(a, b, COAT, closed=False)
+
+    # --- saddle: a rug over the top of the hump, hanging down the flanks (an open sheet: only its outside is seen)
     stations = []
-    first, last = SADDLE[0][0], SADDLE[-1][0]
-    for f, peak, half in SADDLE:
+    for f in SADDLE:
         top, bottom, width = torso_at(f)
         centre, height = (top + bottom) / 2, (top - bottom) / 2
-        peak = top + 0.6 if peak is None else peak
-        column = (f - first) / (last - first) * 2.0  # the pattern repeats twice along the rug
-        left = [(width + 1.3, centre - 0.12 * height, 1.0), (0.74 * width + 1.3, centre + 0.72 * height + 0.5, 0.62),
-                (half, top + 0.62 * (peak - top) + 0.3, 0.3)]
+        (foot, half), peak = hump_points(f, 0.7)
+        column = (f - SADDLE[0]) / (SADDLE[-1] - SADDLE[0]) * 2.0  # the pattern repeats twice along the rug
+        left = [(width + 1.3, centre - 0.02 * height, 1.0), (0.74 * width + 1.3, centre + 0.72 * height + 0.5, 0.76),
+                (foot[0] + 0.5, foot[1] + 0.5, 0.58), (half[0], half[1], 0.36)]
         station = [(mesh.vertex(f, u, s, "Root"), (column, v)) for s, u, v in left]
         station.append((mesh.vertex(f, peak, 0.0, "Root"), (column, 0.17)))
         station += [(mesh.vertex(f, u, -s, "Root"), (column, v)) for s, u, v in reversed(left)]
@@ -494,19 +536,19 @@ def walk_pose(t):
     duty = 0.62
     reach = travel(WALK_SPEED, WALK_CYCLE, duty)
     sway = wave(t, 0.36)  # +1: over its left legs
-    pose.move = [0.0, -3.0 + 0.7 * wave(t, 0.2, 2), 0.9 * sway]
-    pose.turn["Root"] = (0.7 * wave(t, 0.33, 2), 1.4 * wave(t, 0.1), 2.2 * sway)
-    nod = wave(t, 0.4, 2)
-    pose.turn["Neck1"] = (-3.0 + 3.0 * nod, -1.0 * wave(t, 0.1), -1.2 * sway)
-    pose.turn["Neck2"] = (-2.0 - 2.5 * nod, 0.0, -0.8 * sway)
-    pose.turn["Head"] = (4.0 + 1.5 * wave(t, 0.5, 2), 0.0, 0.0)
+    pose.move = [0.0, -3.0 + 0.7 * wave(t, 0.2, 2), 1.7 * sway]
+    pose.turn["Root"] = (0.7 * wave(t, 0.33, 2), 1.6 * wave(t, 0.1), 3.2 * sway)
+    nod = wave(t, 0.4, 2)  # its neck pumps back and forth with every step, its head staying level
+    pose.turn["Neck1"] = (-2.0 + 5.0 * nod, -1.0 * wave(t, 0.1), -1.8 * sway)
+    pose.turn["Neck2"] = (-3.0 - 7.0 * nod, 0.0, -1.2 * sway)
+    pose.turn["Head"] = (5.0 + 2.0 * nod, 0.0, 0.0)
     pose.turn["Jaw"] = (-1.0, 0.0, 0.0)
     pose.turn["EarL"] = (3.0 * wave(t, 0.45, 2), 0.0, 0.0)
     pose.turn["EarR"] = (3.0 * wave(t, 0.45, 2), 0.0, 0.0)
     pose.turn["Tail1"] = (-2.0 + 2.0 * wave(t, 0.1, 2), 8.0 * wave(t, 0.45), 0.0)
     pose.turn["Tail2"] = (-2.0 + 3.0 * wave(t, 0.25, 2), 12.0 * wave(t, 0.6), 0.0)
-    for leg, phase, front in (("HindLegL", 0.0, False), ("FrontLegL", 0.2, True), ("HindLegR", 0.5, False),
-                              ("FrontLegR", 0.7, True)):
+    for leg, phase, front in (("HindLegL", 0.0, False), ("FrontLegL", 0.12, True), ("HindLegR", 0.5, False),
+                              ("FrontLegR", 0.62, True)):
         if front:
             step(pose, leg, t - phase, duty, (reach * 0.52, -reach * 0.48), 5.0, -32, 34, 42)
         else:
@@ -521,11 +563,11 @@ def pace_pose(t):
     duty = 0.46
     reach = travel(PACE_SPEED, PACE_CYCLE, duty)
     sway = wave(t, 0.27)  # +1: over its left legs
-    pose.move = [0.0, -3.4 + 1.1 * wave(t, 0.16, 2), 1.3 * sway]
-    pose.turn["Root"] = (0.8 * wave(t, 0.3, 2), 1.6 * wave(t, 0.05), 3.4 * sway)
+    pose.move = [0.0, -3.4 + 1.1 * wave(t, 0.16, 2), 2.3 * sway]
+    pose.turn["Root"] = (0.8 * wave(t, 0.3, 2), 1.8 * wave(t, 0.05), 4.6 * sway)
     nod = wave(t, 0.38, 2)
-    pose.turn["Neck1"] = (-7.0 + 3.5 * nod, 0.0, -2.0 * sway)
-    pose.turn["Neck2"] = (-8.0 - 3.0 * nod, 0.0, -1.2 * sway)
+    pose.turn["Neck1"] = (-7.0 + 5.5 * nod, 0.0, -2.8 * sway)
+    pose.turn["Neck2"] = (-8.0 - 7.0 * nod, 0.0, -1.6 * sway)
     pose.turn["Head"] = (13.0 + 2.0 * wave(t, 0.5, 2), 0.0, 0.0)
     pose.turn["Jaw"] = (-2.0, 0.0, 0.0)
     pose.turn["EarL"] = (10.0 + 4.0 * wave(t, 0.45, 2), 0.0, 0.0)
@@ -549,10 +591,10 @@ def gallop_pose(t):
     reach = travel(GALLOP_SPEED, GALLOP_CYCLE, duty)
     stretch = wave(t, 0.2)  # +1 stretched out in the air after the hind feet push off, -1 gathered
     pose.move = [0.0, -4.0 + 2.6 * wave(t, 0.12), 0.0]
-    pose.turn["Root"] = (4.0 * wave(t, 0.95), 0.0, 0.0)
-    pose.turn["Neck1"] = (-12.0 - 5.0 * stretch, 0.0, 0.0)
-    pose.turn["Neck2"] = (-30.0 - 7.0 * stretch, 0.0, 0.0)
-    pose.turn["Head"] = (34.0 + 4.0 * wave(t, 0.1), 0.0, 0.0)
+    pose.turn["Root"] = (5.5 * wave(t, 0.95), 0.0, 1.6 * wave(t, 0.3))
+    pose.turn["Neck1"] = (-10.0 - 7.0 * stretch, 0.0, 0.0)
+    pose.turn["Neck2"] = (-38.0 - 9.0 * stretch, 0.0, 0.0)
+    pose.turn["Head"] = (40.0 + 6.0 * stretch, 0.0, 0.0)
     pose.turn["Jaw"] = (-7.0 - 3.0 * wave(t, 0.4), 0.0, 0.0)
     pose.turn["EarL"] = (30.0 + 6.0 * wave(t, 0.3), -8.0, 0.0)
     pose.turn["EarR"] = (30.0 + 6.0 * wave(t, 0.3), 8.0, 0.0)
@@ -616,11 +658,95 @@ def balk_pose(t):
                   (BALK_STAMP, stamp, "in"), (last, key(), "smooth")], t * last)
 
 
+# ---- lying down and getting up. A camel waits lying on its folded legs, and lets its rider on and off there: it
+# gets up hind legs first, from its knees, and lies down front first, onto them.
+DROP = 33.0  # how far its body comes down
+
+
+def ankle_at(leg, ankle, pitch, fold):
+    """a foot by where its ankle is, (f, u) from the ground under the camel's middle at rest"""
+    limbs = LEGS[leg][3]
+    rest, sole = BONES[limbs[-1]][1][:2], (BONES[limbs[-1]][2][0], 0.0)
+    reach = bc.turned(bc.sub(sole, rest), pitch)
+    return Foot((ankle[0] + reach[0] - sole[0], ankle[1] + reach[1] - sole[1]), pitch, fold)
+
+
+def folded(front=True, hind=True):
+    """its legs folded under it: the forelegs on their knees, the shins tucked back; the hind legs on their hocks,
+    the shins lying forward"""
+    feet = {}
+    if front:
+        feet.update({leg: ankle_at(leg, (7.5, 6.5), -100.0, 150.0) for leg in ("FrontLegL", "FrontLegR")})
+    if hind:
+        feet.update({leg: ankle_at(leg, (-22.0, 5.5), 60.0, 122.0) for leg in ("HindLegL", "HindLegR")})
+    return feet
+
+
+def lying(**turns):
+    return key(move=(0.0, -DROP, 0.0), free=True, feet=folded(), **turns)
+
+
+def on_knees(lift=0.0):
+    """down on its knees in front, its rump still up"""
+    feet = {leg: ankle_at(leg, (3.0, 5.0), -96.0, 102.0) for leg in ("FrontLegL", "FrontLegR")}
+    return key(move=(1.5, -12.0 + lift, 0.0), free=True, feet=feet, Root=(-17.0, 0, 0), Neck1=(9.0, 0, 0),
+               Neck2=(6.0, 0, 0), Head=(2.0, 0, 0), Tail1=(-10.0, 0, 0))
+
+
+def couched_pose(t):
+    """lying at rest: chewing, the odd flick of an ear"""
+    jaw = chew(t, 7)
+    breath = wave(t, 0, 2)
+    return lying(Neck1=(1.0 * breath, 0, 0), Neck2=(-0.6 * breath, 0, 0), Jaw=(jaw[0], jaw[1], 0.0),
+                 EarL=(0.0, 24.0 * pulse(t, 0.3, 0.08), 0.0), EarR=(0.0, -24.0 * pulse(t, 0.75, 0.08), 0.0),
+                 Tail2=(0.0, 14.0 * pulse(t, 0.5, 0.2) * wave(t, 0.0, 8), 0.0))
+
+
+KNEEL_FRAMES, RISE_FRAMES = 30, 34  # (Camel.h has these numbers too)
+
+
+def kneel_pose(t):
+    """lying down: onto its knees, its hindquarters let down behind, settling"""
+    last = KNEEL_FRAMES - 1
+    sinking = key(move=(-1.0, -27.0, 0.0), free=True, feet=folded(), Root=(-4.0, 0, 0), Neck1=(4.0, 0, 0))
+    return keyed([(0, key(), "even"), (11, on_knees(), "smooth"), (22, sinking, "smooth"), (last, lying(), "out")], t * last)
+
+
+def rise_pose(t):
+    """getting up: its rump goes up first, tipping its rider forward, then it straightens its forelegs"""
+    last = RISE_FRAMES - 1
+    heaving = key(move=(0.5, -25.0, 0.0), free=True, feet=folded(hind=False), Root=(-10.0, 0, 0), Neck1=(6.0, 0, 0))
+    nearly = key(move=(0.0, -2.5, 0.0), Root=(2.5, 0, 0), Neck1=(-4.0, 0, 0), Neck2=(-3.0, 0, 0),
+                 feet={"FrontLegL": Foot((2.0, 2.0), -10.0, 20.0)})
+    return keyed([(0, lying(), "even"), (8, heaving, "smooth"), (17, on_knees(1.0), "smooth"), (27, nearly, "smooth"),
+                  (last, key(), "smooth")], t * last)
+
+
+# What the camel does while its rider gets on and off (camel_rider.py poses her against these; the game puts the
+# same together from the animations above, see Camel.cpp): lying while she climbs on, then getting up; and lying down
+# under her, then lying while she gets off.
+MOUNT_FRAMES, STEP_ON_FRAMES, DISMOUNT_FRAMES = 60, 22, 52
+
+
+def for_mount_pose(t):
+    frame = t * (MOUNT_FRAMES - 1)
+    if frame < STEP_ON_FRAMES:
+        return lying()
+    return rise_pose(min(1.0, (frame - STEP_ON_FRAMES) / (RISE_FRAMES - 1)))
+
+
+def for_dismount_pose(t):
+    return kneel_pose(min(1.0, t * (DISMOUNT_FRAMES - 1) / (KNEEL_FRAMES - 1)))
+
+
+PICTURES_ONLY = {"ForMount": (MOUNT_FRAMES, for_mount_pose, False), "ForDismount": (DISMOUNT_FRAMES, for_dismount_pose, False)}
+
 # animation -> (frames, pose at 0..1, whether it goes round: the others play once, from the first frame to the last)
 ANIMATIONS = {"Idle": (120, idle_pose, True), "Grumble": (GRUMBLE_FRAMES, grumble_pose, False),
               "Halt": (HALT_FRAMES, halt_pose, False), "Balk": (BALK_FRAMES, balk_pose, False),
               "Walk": (WALK_FRAMES, walk_pose, True), "Pace": (PACE_FRAMES, pace_pose, True),
-              "Gallop": (GALLOP_FRAMES, gallop_pose, True)}
+              "Gallop": (GALLOP_FRAMES, gallop_pose, True), "Couched": (80, couched_pose, True),
+              "Kneel": (KNEEL_FRAMES, kneel_pose, False), "Rise": (RISE_FRAMES, rise_pose, False)}
 # Epona's animations that Link's hidden riding animation is stepped along with: ours may not have more frames
 EPONA_FRAMES = {"Halt": 65, "Balk": 33, "Walk": 35, "Pace": 29, "Gallop": 24}
 
@@ -658,13 +784,13 @@ def main():
     print(f"camel: {len(mesh.points)} vertices, {mesh.triangles()} triangles, {len(BONES)} limbs")
     print(f"camel: seat at {SEAT[0] * SIZE:.1f} forward, {SEAT[1] * SIZE:.1f} up (game units)")
 
-    actions = bc.make_actions(RIG, armature, ANIMATIONS)
+    actions = bc.make_actions(RIG, armature, {**ANIMATIONS, **PICTURES_ONLY})
 
     rider = None
     if not args.no_rider:
         import camel_rider
 
-        rider = camel_rider.Rider(args.game, args.nabooru, sys.modules[__name__], armature)
+        rider = camel_rider.Rider(args.game, args.nabooru, sys.modules[__name__], armature, actions)
         rider.make_actions()
 
     look = dict(target=(0.0, -1.0, 4.6), span=15.0)
@@ -677,8 +803,8 @@ def main():
                                           ("model_back", 150, 25, 0), ("model_top", 60, 55, 0)], **look)
         bc.render_previews(args.preview, [("head_side", 90, 4, 0), ("head_front", 20, 8, 0)],
                            target=(0.0, -4.6, 8.4), span=4.5)
-        for name, action in actions.items():
-            frames = ANIMATIONS[name][0]
+        for name in ANIMATIONS:
+            frames, action = ANIMATIONS[name][0], actions[name]
             bc.show(armature, action)
             bc.render_previews(args.preview, [(f"{name.lower()}_{frame:02}", 90, 4, frame)
                                               for frame in range(0, frames, max(1, frames // 8))], columns=4, **look)
@@ -687,7 +813,7 @@ def main():
                            columns=4, **look)
         if rider:
             rider.hide(False)
-            rider.render_previews(args.preview, actions)
+            rider.render_previews(args.preview)
     bc.show(armature, actions["Idle"])
     if args.blend:
         bpy.ops.wm.save_as_mainfile(filepath=str(args.blend))
@@ -697,8 +823,8 @@ def main():
     with tempfile.TemporaryDirectory() as folder:
         files = {path: file.read_bytes() for path, file in bc.export_skeleton(armature, OBJECT, Path(folder)).items()}
     assert sum("SkelLimb_" in path for path in files) == len(BONES), "the skeleton lost limbs"
-    for name, action in actions.items():
-        files[f"{OBJECT}/gCamel{name}Anim"] = bc.export_animation(armature, action, SKELETON)
+    for name in ANIMATIONS:
+        files[f"{OBJECT}/gCamel{name}Anim"] = bc.export_animation(armature, actions[name], SKELETON)
     bc.show(armature, actions["Idle"])
     if rider:
         files.update(rider.export())

@@ -180,6 +180,8 @@ typedef struct EnHorse {
 
 #define EN_HORSE_CHECK_4(horseActor)                                                                 \
     (((((horseActor)->action == ENHORSE_ACT_MOUNTED_IDLE) || ((horseActor)->action == ENHORSE_ACT_FROZEN) || ((horseActor)->action == ENHORSE_ACT_MOUNTED_IDLE_WHINNEYING)) && \
+      /* (a camel is getting up under its rider while it is frozen) */                               \
+      !((horseActor)->type == HORSE_CAMEL && (horseActor)->action == ENHORSE_ACT_FROZEN) &&          \
       !((horseActor)->stateFlags & ENHORSE_FLAG_19) && !((horseActor)->stateFlags & ENHORSE_FLAG_25))          \
          ? true                                                                                      \
          : false)

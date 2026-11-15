@@ -2,6 +2,7 @@
 //
 // The camel is one of the game's horses: En_Horse runs it (riding, steering, mounting, following, obstacles), told
 // by its type where it differs from Epona (see Camel.h for how it handles; it has no carrots and does not jump).
+// Unlike her it lies down to wait for its rider and to let them on and off (see "lying down and getting up").
 // This file is what En_Horse cannot do for it: Epona is a skinned mesh, the camel a plain skeleton of rigid limbs
 // like most of the game's creatures, so it is drawn here, and what En_Horse reads off Epona's skin after drawing
 // her is read off the camel's limbs instead: where the rider sits, where its head is (its voice, the collider
@@ -17,6 +18,7 @@
 #include "soh/Enhancements/PlayAsNabooru/Camel.h"
 #include "soh/Enhancements/PlayAsNabooru/ModSound.h"
 #include "soh/frame_interpolation.h" // gives OPEN_DISPS' interpolation calls C linkage in this C++ file
+#include <cstring>
 
 extern "C" {
 #include "z64.h"
@@ -63,16 +65,29 @@ enum CamelLimb {
 namespace {
 
 const char kSkeleton[] = CAMEL_ASSET("gCamelSkel");
+// lying at rest, lying down, getting up (the animations En_Horse plays where Epona has hers are in z_en_horse.c)
+const char kCouchedAnim[] = CAMEL_ASSET("gCamelCouchedAnim");
+const char kKneelAnim[] = CAMEL_ASSET("gCamelKneelAnim");
+const char kRiseAnim[] = CAMEL_ASSET("gCamelRiseAnim");
+
+void Play(EnHorse* horse, const char* anim, u8 mode, f32 morph) {
+    Animation_Change(&horse->skin.skelAnime, (AnimationHeader*)anim, 1.0f, 0.0f,
+                     Animation_GetLastFrame((AnimationHeader*)anim), mode, morph);
+}
+
+bool Playing(EnHorse* horse, const char* anim) {
+    return horse->skin.skelAnime.animation == (AnimationHeader*)anim;
+}
 
 // In model units (100 a game unit), in a limb's own axes: a foot limb runs from the ankle along +y to the toes, the
 // head from the back of the skull to the muzzle; the seat limb's axes are the model's (x left, y up, z forward).
 Vec3f kSole = { 0.0f, 500.0f, 0.0f };
 Vec3f kHeadMiddle = { 0.0f, 900.0f, 0.0f };
 // Where the player's actor rides: En_Horse's "rider position". The player's actor is put 27 units under it, and
-// Link's hips are 33.8 units above his actor: this sits him in the saddle (the seat is 79.7 units up, 5 behind the
+// Link's hips are 33.8 units above his actor: this sits him in the saddle (the seat is 85.2 units up, 5.4 behind the
 // model's middle: SEAT in tools/build_camel.py). Nabooru is not placed by it: she is drawn in the seat's frame (see
 // Camel_GetSeat). Link's own mounting starts, and his dismounting ends, 35 units to the side of it and 7 ahead.
-Vec3f kRiderPoint = { 0.0f, 7640.0f, -495.0f };
+Vec3f kRiderPoint = { 0.0f, 8200.0f, -540.0f };
 // Dust under a foot that comes down while it runs.
 constexpr f32 kDustSpeed = 5.0f;
 constexpr f32 kFootDown = 2.5f; // a foot this near the ground (units) is on it
@@ -159,6 +174,50 @@ void CamelPostLimbDraw(PlayState* play, s32 limbIndex, Gfx** dList, Vec3s* rot, 
 
 void Camel_Init(EnHorse* horse, PlayState* play, AnimationHeader* idleAnim) {
     SkelAnime_InitFlex(play, &horse->skin.skelAnime, (FlexSkeletonHeader*)kSkeleton, idleAnim, NULL, NULL, 0);
+}
+
+// ---- lying down and getting up
+// Left alone, a camel lies on its folded legs. Its rider climbs on there, then it gets up, rump first; and it lies
+// down again under them before they get off. En_Horse knows none of this: it has the camel "frozen" while its
+// rider mounts, as it has Epona stand still, and idle once they are off.
+void Camel_Lie(EnHorse* horse) {
+    if (!Playing(horse, kCouchedAnim)) {
+        Play(horse, kCouchedAnim, ANIMMODE_LOOP, 0.0f);
+    }
+}
+
+void Camel_Rest(EnHorse* horse) {
+    Camel_Lie(horse);
+    SkelAnime_Update(&horse->skin.skelAnime);
+}
+
+void Camel_Frozen(EnHorse* horse) {
+    if (horse->playerControlled) {
+        // its rider is climbing on: once they sit, it gets up
+        if (horse->noInputTimerMax - horse->noInputTimer == CAMEL_STEP_ON_FRAMES) {
+            Play(horse, kRiseAnim, ANIMMODE_ONCE, 0.0f);
+        }
+        SkelAnime_Update(&horse->skin.skelAnime);
+    } else if (SkelAnime_Update(&horse->skin.skelAnime) && Playing(horse, kKneelAnim)) {
+        Camel_Lie(horse); // its rider has got off
+    }
+}
+
+s32 Camel_Kneeling(EnHorse* horse, PlayState* play) {
+    Player* player = GET_PLAYER(play);
+    const char* anim = (const char*)player->skelAnime.animation;
+    // (Link's animations are named by their paths. En_Horse has the camel down as riderless, and frozen, from the
+    // moment its rider starts to get off.)
+    if (player->rideActor != &horse->actor || anim == nullptr ||
+        (strstr(anim, "uma_left_down") == nullptr && strstr(anim, "uma_right_down") == nullptr)) {
+        return false;
+    }
+    if (!Playing(horse, kKneelAnim)) {
+        Play(horse, kKneelAnim, ANIMMODE_ONCE, -3.0f);
+    }
+    horse->actor.speedXZ = 0.0f;
+    SkelAnime_Update(&horse->skin.skelAnime);
+    return true;
 }
 
 void Camel_Destroy(EnHorse* horse, PlayState* play) {
