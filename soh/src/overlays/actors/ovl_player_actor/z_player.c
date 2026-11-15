@@ -11022,7 +11022,9 @@ void Player_UpdateInterface(PlayState* play, Player* this) {
                         } else {
                             doAction = DO_ACTION_CHECK;
                         }
-                    } else if (!func_8002DD78(this) && !(this->stateFlags1 & PLAYER_STATE1_FIRST_PERSON)) {
+                    } else if (!func_8002DD78(this) && !(this->stateFlags1 & PLAYER_STATE1_FIRST_PERSON) &&
+                               // (the Play as Nabooru mod's camel is not spurred on: no carrots either)
+                               ((EnHorse*)this->rideActor)->type != HORSE_CAMEL) {
                         doAction = DO_ACTION_FASTER;
                     }
                 } else if ((this->stateFlags2 & PLAYER_STATE2_CAN_ACCEPT_TALK_OFFER) && (this->talkActor != NULL)) {

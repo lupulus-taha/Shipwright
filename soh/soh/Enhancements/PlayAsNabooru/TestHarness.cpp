@@ -30,6 +30,12 @@
 //   honoured 0|1              whether Nabooru is honoured by jackals (the save file's flag)
 //   savecheck                 write the game into save slot 1 and load it back, logging the mod's save flags
 //   warp HEX                  go to entrance HEX (follow with waitplay)
+//   camel X Y Z DEG           put a camel there, facing DEG (0 = +Z); "epona X Y Z DEG" puts Epona there instead.
+//                             While the player is near a horse or rides one, the log has a "ride" line a frame:
+//                             the horse's place, speed, action and animation, where the player is from it (to its
+//                             left, above it, ahead of it), En_Horse's rider position, Link's root joint
+//   beside SIDE [DIST]        stand the player beside the nearest horse (SIDE 1: on its left, -1: on its right),
+//                             DIST (40) from its middle, facing it: A then mounts
 //   pose NAME FRAME [SWORDS SFRAME]  show frame FRAME of gPlayAsNabooru<NAME>Anim instead of mirroring Link,
 //                             optionally with the scimitars of <SWORDS> frame SFRAME; "pose off"
 //   done                      write <out>/done and exit the game
@@ -41,6 +47,7 @@
 #include "soh/SaveManager.h"
 #include "soh/Enhancements/PlayAsNabooru/ModSound.h"
 #include "soh/Enhancements/PlayAsNabooru/NabooruSave.h"
+#include "soh/Enhancements/PlayAsNabooru/Camel.h"
 #include <ship/Context.h>
 #include <ship/window/Window.h>
 #include <algorithm>
@@ -59,7 +66,9 @@ extern "C" {
 #include "macros.h"
 #include "functions.h"
 #include "variables.h"
+#include "overlays/actors/ovl_En_Horse/z_en_horse.h"
 extern PlayState* gPlayState;
+s32 Object_Spawn(ObjectContext* objectCtx, s16 objectId);
 extern GameState* gGameState;
 }
 
@@ -94,6 +103,8 @@ enum class Kind {
     Pose,
     Warp,
     Rise,
+    Horse,
+    Beside,
     Save,
     Restore,
     Done
@@ -208,6 +219,16 @@ void LoadScript(const char* path) {
         } else if (cmd == "rise") {
             step.kind = Kind::Rise;
             in >> step.values[0];
+        } else if (cmd == "camel" || cmd == "epona") {
+            step.kind = Kind::Horse;
+            step.text = cmd;
+            float degrees = 0.0f;
+            in >> step.values[0] >> step.values[1] >> step.values[2] >> degrees;
+            step.frames = (int)degrees;
+        } else if (cmd == "beside") {
+            step.kind = Kind::Beside;
+            step.values[1] = 40.0f;
+            in >> step.values[0] >> step.values[1];
         } else if (cmd == "pos") {
             step.kind = Kind::Pos;
             in >> step.values[0] >> step.values[1] >> step.values[2];
@@ -254,6 +275,41 @@ Player* GetPlayer() {
     return (gPlayState != nullptr) ? GET_PLAYER(gPlayState) : nullptr;
 }
 
+// the horse the player rides, or else the nearest one
+EnHorse* NearestHorse(Player* player) {
+    if (player->rideActor != nullptr) {
+        return (EnHorse*)player->rideActor;
+    }
+    Actor* nearest = nullptr;
+    for (Actor* actor = gPlayState->actorCtx.actorLists[ACTORCAT_BG].head; actor != nullptr; actor = actor->next) {
+        if (actor->id == ACTOR_EN_HORSE && actor->update != nullptr &&
+            (nearest == nullptr || actor->xzDistToPlayer < nearest->xzDistToPlayer)) {
+            nearest = actor;
+        }
+    }
+    return (EnHorse*)nearest;
+}
+
+void LogHorse(Player* player) {
+    EnHorse* horse = NearestHorse(player);
+    if (horse == nullptr || (player->rideActor == nullptr && horse->actor.xzDistToPlayer > 300.0f)) {
+        return;
+    }
+    Actor* actor = &horse->actor;
+    f32 sin = Math_SinS(actor->shape.rot.y), cos = Math_CosS(actor->shape.rot.y);
+    f32 dx = player->actor.world.pos.x - actor->world.pos.x, dz = player->actor.world.pos.z - actor->world.pos.z;
+    f32 rx = horse->riderPos.x, rz = horse->riderPos.z;
+    Vec3s root = (player->skelAnime.jointTable != nullptr) ? player->skelAnime.jointTable[0] : Vec3s{ 0, 0, 0 };
+    fprintf(sLog,
+            "%5d   ride%c at %7.1f %6.1f %7.1f yaw %04X spd %5.2f act %2d anim %d %5.1f flags %08X | player left %6.1f "
+            "up %6.1f ahead %6.1f | rider left %5.1f up %5.1f ahead %5.1f | lroot %5d %5d %5d u878 %5.1f side %d\n",
+            sFrame, (player->stateFlags1 & PLAYER_STATE1_ON_HORSE) ? '*' : ' ', actor->world.pos.x, actor->world.pos.y,
+            actor->world.pos.z, (u16)actor->shape.rot.y, actor->speedXZ, (int)horse->action, horse->animationIdx,
+            horse->skin.skelAnime.curFrame, horse->stateFlags, dx * cos - dz * sin,
+            player->actor.world.pos.y - actor->world.pos.y, dx * sin + dz * cos, rx * cos - rz * sin, horse->riderPos.y,
+            rx * sin + rz * cos, root.x, root.y, root.z, player->unk_878, player->mountSide);
+}
+
 void LogFrame() {
     Player* player = GetPlayer();
     if (sLog == nullptr || !sLogging || player == nullptr) {
@@ -293,6 +349,7 @@ void LogFrame() {
             (strcmp(attack, "-") == 0) ? ' ' : swinging ? 's' : 'r', comboNext, comboWindow, player->meleeWeaponState,
             hitboxes);
     sLastPos = player->actor.world.pos;
+    LogHorse(player);
 
     if (!sLogActors.empty()) {
         for (s32 category = 0; category < ACTORCAT_MAX; category++) {
@@ -520,6 +577,39 @@ void OnFrameStart() {
                 if (player) {
                     player->actor.world.pos = { step.values[0], step.values[1], step.values[2] };
                     player->actor.prevPos = player->actor.home.pos = player->actor.world.pos;
+                }
+                break;
+            case Kind::Horse:
+                if (gPlayState) {
+                    s16 yaw = (s16)(step.frames * (0x10000 / 360.0f));
+                    Actor* horse = nullptr;
+                    if (step.text == "camel") {
+                        horse = Camel_Spawn(gPlayState, step.values[0], step.values[1], step.values[2], yaw);
+                    } else {
+                        if (Object_GetIndex(&gPlayState->objectCtx, OBJECT_HORSE) < 0) {
+                            Object_Spawn(&gPlayState->objectCtx, OBJECT_HORSE);
+                        }
+                        horse = Actor_Spawn(&gPlayState->actorCtx, gPlayState, ACTOR_EN_HORSE, step.values[0],
+                                            step.values[1], step.values[2], 0, yaw, 0, 1);
+                    }
+                    if (sLog) {
+                        fprintf(sLog, "%5d %s %s\n", sFrame, step.text.c_str(), horse ? "spawned" : "NOT spawned");
+                    }
+                }
+                break;
+            case Kind::Beside:
+                if (player) {
+                    if (EnHorse* horse = NearestHorse(player)) {
+                        s16 yaw = horse->actor.shape.rot.y;
+                        f32 side = step.values[0] * step.values[1];
+                        player->actor.world.pos.x = horse->actor.world.pos.x + side * Math_CosS(yaw);
+                        player->actor.world.pos.z = horse->actor.world.pos.z - side * Math_SinS(yaw);
+                        player->actor.world.pos.y = horse->actor.world.pos.y;
+                        player->actor.prevPos = player->actor.home.pos = player->actor.world.pos;
+                        // facing the horse
+                        s16 facing = yaw + (step.values[0] > 0 ? -0x4000 : 0x4000);
+                        player->actor.shape.rot.y = player->actor.world.rot.y = player->yaw = facing;
+                    }
                 }
                 break;
             case Kind::Save:

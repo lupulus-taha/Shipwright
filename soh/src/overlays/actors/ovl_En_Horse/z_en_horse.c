@@ -10,6 +10,7 @@
 #include "objects/object_hni/object_hni.h"
 #include "scenes/overworld/spot09/spot09_scene.h"
 #include "soh/Enhancements/game-interactor/GameInteractor_Hooks.h"
+#include "soh/Enhancements/PlayAsNabooru/Camel.h"
 #include <assert.h>
 #include <libultraship/bridge/consolevariablebridge.h>
 
@@ -63,7 +64,23 @@ static AnimationHeader* sHniAnimHeaders[] = {
     &gHorseIngoGallopingAnim, &gHorseIngoJumpingAnim, &gHorseIngoJumpingHighAnim,
 };
 
-static AnimationHeader** sAnimationHeaders[] = { sEponaAnimHeaders, sHniAnimHeaders };
+// The camel (Play as Nabooru mod) has its own skeleton and animations: its complaint for the whinny, its pace for
+// the trot, digging in and balking for the refusal and the rearing up. It does not jump.
+static const ALIGN_ASSET(2) char sCamelIdleAnim[] = CAMEL_ASSET("gCamelIdleAnim");
+static const ALIGN_ASSET(2) char sCamelGrumbleAnim[] = CAMEL_ASSET("gCamelGrumbleAnim");
+static const ALIGN_ASSET(2) char sCamelHaltAnim[] = CAMEL_ASSET("gCamelHaltAnim");
+static const ALIGN_ASSET(2) char sCamelBalkAnim[] = CAMEL_ASSET("gCamelBalkAnim");
+static const ALIGN_ASSET(2) char sCamelWalkAnim[] = CAMEL_ASSET("gCamelWalkAnim");
+static const ALIGN_ASSET(2) char sCamelPaceAnim[] = CAMEL_ASSET("gCamelPaceAnim");
+static const ALIGN_ASSET(2) char sCamelGallopAnim[] = CAMEL_ASSET("gCamelGallopAnim");
+
+static AnimationHeader* sCamelAnimHeaders[] = {
+    (AnimationHeader*)sCamelIdleAnim, (AnimationHeader*)sCamelGrumbleAnim, (AnimationHeader*)sCamelHaltAnim,
+    (AnimationHeader*)sCamelBalkAnim, (AnimationHeader*)sCamelWalkAnim,    (AnimationHeader*)sCamelPaceAnim,
+    (AnimationHeader*)sCamelGallopAnim, (AnimationHeader*)sCamelGallopAnim, (AnimationHeader*)sCamelGallopAnim,
+};
+
+static AnimationHeader** sAnimationHeaders[] = { sEponaAnimHeaders, sHniAnimHeaders, sCamelAnimHeaders };
 
 static f32 sPlaybackSpeeds[] = { 2.0f / 3.0f, 2.0f / 3.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 2.0f / 3.0f, 2.0f / 3.0f };
 
@@ -779,6 +796,10 @@ void EnHorse_Init(Actor* thisx, PlayState* play2) {
         this->actor.objBankIndex = this->bankIndex;
         Actor_SetObjectDependency(play, &this->actor);
         this->boostSpeed = 12;
+    } else if (this->actor.params & ENHORSE_PARAM_CAMEL) {
+        this->actor.params &= ~ENHORSE_PARAM_CAMEL;
+        this->type = HORSE_CAMEL;
+        this->boostSpeed = CAMEL_TOP_SPEED; // (it is never spurred on: this only scales how it turns and leans)
     } else {
         this->type = HORSE_EPONA;
         this->boostSpeed = 14;
@@ -814,6 +835,9 @@ void EnHorse_Init(Actor* thisx, PlayState* play2) {
     if (play->sceneNum == SCENE_LON_LON_RANCH && (gSaveContext.eventInf[0] & 0xF) == 6 &&
         Flags_GetEventChkInf(EVENTCHKINF_EPONA_OBTAINED) == 0 && !DREG(1)) {
         this->stateFlags |= ENHORSE_FLAG_25;
+    }
+    if (this->type == HORSE_CAMEL) {
+        this->stateFlags |= ENHORSE_CANT_JUMP;
     }
 
     Actor_SetScale(&this->actor, 0.01f);
@@ -858,7 +882,11 @@ void EnHorse_Init(Actor* thisx, PlayState* play2) {
         this->stateFlags |= ENHORSE_UNRIDEABLE;
     }
 
-    Skin_Init(play, &this->skin, sSkeletonHeaders[this->type], sAnimationHeaders[this->type][ENHORSE_ANIM_IDLE]);
+    if (this->type == HORSE_CAMEL) {
+        Camel_Init(this, play, sAnimationHeaders[this->type][ENHORSE_ANIM_IDLE]);
+    } else {
+        Skin_Init(play, &this->skin, sSkeletonHeaders[this->type], sAnimationHeaders[this->type][ENHORSE_ANIM_IDLE]);
+    }
     this->animationIdx = ENHORSE_ANIM_IDLE;
     Animation_PlayOnce(&this->skin.skelAnime, sAnimationHeaders[this->type][this->animationIdx]);
     this->numBoosts = 6;
@@ -906,7 +934,11 @@ void EnHorse_Destroy(Actor* thisx, PlayState* play) {
     if (this->stateFlags & ENHORSE_DRAW) {
         Audio_StopSfxByPos(&this->unk_21C);
     }
-    Skin_Free(play, &this->skin);
+    if (this->type == HORSE_CAMEL) {
+        Camel_Destroy(this, play);
+    } else {
+        Skin_Free(play, &this->skin);
+    }
     Collider_DestroyCylinder(play, &this->cyl1);
     Collider_DestroyCylinder(play, &this->cyl2);
     Collider_DestroyJntSph(play, &this->jntSph);
@@ -1047,8 +1079,15 @@ void EnHorse_UpdateSpeed(EnHorse* this, PlayState* play, f32 brakeDecel, f32 bra
             this->stateFlags &= ~ENHORSE_BOOST_DECEL;
         }
     } else {
-        this->actor.speedXZ +=
-            (this->actor.speedXZ <= baseSpeed * (1.0f / 54.0f) * stickMag ? 1.0f : -1.0f) * 50.0f * 0.01f;
+        if (this->type == HORSE_CAMEL) {
+            // heavier than a horse: it gathers speed more slowly the faster it already goes, and loses it more slowly
+            this->actor.speedXZ += (this->actor.speedXZ <= baseSpeed * (1.0f / 54.0f) * stickMag)
+                                       ? CAMEL_ACCELERATION(this->actor.speedXZ)
+                                       : -CAMEL_DECELERATION;
+        } else {
+            this->actor.speedXZ +=
+                (this->actor.speedXZ <= baseSpeed * (1.0f / 54.0f) * stickMag ? 1.0f : -1.0f) * 50.0f * 0.01f;
+        }
         if (baseSpeed < this->actor.speedXZ) {
             this->actor.speedXZ = this->actor.speedXZ - decel;
             if (this->actor.speedXZ < baseSpeed) {
@@ -1060,6 +1099,9 @@ void EnHorse_UpdateSpeed(EnHorse* this, PlayState* play, f32 brakeDecel, f32 bra
     temp_f12 = *stickAnglePtr * (1 / 32236.f);
     traction = 2.2f - (this->actor.speedXZ * (1.0f / this->boostSpeed));
     turn = *stickAnglePtr * temp_f12 * temp_f12 * traction;
+    if (this->type == HORSE_CAMEL) {
+        turnSpeed *= CAMEL_TURNING;
+    }
     turn = CLAMP(turn, -turnSpeed * traction, turnSpeed * traction);
     this->actor.world.rot.y += turn;
     this->actor.shape.rot.y = this->actor.world.rot.y;
@@ -1266,7 +1308,7 @@ void EnHorse_MountedWalk(EnHorse* this, PlayState* play) {
 
     if (this->waitTimer <= 0) {
         this->stateFlags &= ~ENHORSE_FLAG_9;
-        this->skin.skelAnime.playSpeed = this->actor.speedXZ * 0.75f;
+        this->skin.skelAnime.playSpeed = this->actor.speedXZ * (this->type == HORSE_CAMEL ? CAMEL_WALK_PACE : 0.75f);
         if (SkelAnime_Update(&this->skin.skelAnime) || this->actor.speedXZ == 0.0f) {
             if (this->noInputTimer <= 0.0f) {
                 if (this->actor.speedXZ > 3.0f) {
@@ -1313,7 +1355,7 @@ void EnHorse_MountedTrot(EnHorse* this, PlayState* play) {
         EnHorse_StartWalkingInterruptable(this);
     }
 
-    this->skin.skelAnime.playSpeed = this->actor.speedXZ * 0.375f;
+    this->skin.skelAnime.playSpeed = this->actor.speedXZ * (this->type == HORSE_CAMEL ? CAMEL_TROT_PACE : 0.375f);
     if (SkelAnime_Update(&this->skin.skelAnime)) {
         EnHorse_PlayTrottingSound(this);
         Rumble_Request(0.0f, 60, 8, 255);
@@ -1372,7 +1414,9 @@ void EnHorse_MountedGallop(EnHorse* this, PlayState* play) {
     EnHorse_StickDirection(&this->curStick, &stickMag, &stickAngle);
 
     if (this->noInputTimer <= 0.0f) {
-        EnHorse_UpdateSpeed(this, play, 0.3f, -0.5f, 10.0f, 0.06f, 8.0f, 0x190);
+        // (the camel needs no spurring on: given its head, it works up to its full speed by itself)
+        EnHorse_UpdateSpeed(this, play, 0.3f, -0.5f, 10.0f, 0.06f,
+                            this->type == HORSE_CAMEL ? CAMEL_TOP_SPEED : 8.0f, 0x190);
     } else if (this->noInputTimer > 0.0f) {
         this->noInputTimer -= 1;
         this->actor.speedXZ = 8.0f;
@@ -1381,7 +1425,7 @@ void EnHorse_MountedGallop(EnHorse* this, PlayState* play) {
         EnHorse_StartTrotting(this);
     }
 
-    this->skin.skelAnime.playSpeed = this->actor.speedXZ * 0.3f;
+    this->skin.skelAnime.playSpeed = this->actor.speedXZ * (this->type == HORSE_CAMEL ? CAMEL_GALLOP_PACE : 0.3f);
     if (SkelAnime_Update(&this->skin.skelAnime)) {
         EnHorse_PlayGallopingSound(this);
         Rumble_Request(0, 120, 8, 255);
@@ -1465,14 +1509,16 @@ void EnHorse_StartBraking(EnHorse* this, PlayState* play) {
 }
 
 void EnHorse_Stopping(EnHorse* this, PlayState* play) {
+    f32 stillFrame = (this->type == HORSE_CAMEL) ? CAMEL_HALT_STILL_FRAME : 29.0f;
+
     if (this->actor.speedXZ > 0.0f) {
-        this->actor.speedXZ = this->actor.speedXZ - 0.6f;
+        this->actor.speedXZ = this->actor.speedXZ - ((this->type == HORSE_CAMEL) ? CAMEL_HALT_DECELERATION : 0.6f);
         if (this->actor.speedXZ < 0.0f) {
             this->actor.speedXZ = 0.0f;
         }
     }
 
-    if (this->stateFlags & ENHORSE_STOPPING_NEIGH_SOUND && this->skin.skelAnime.curFrame > 29.0f) {
+    if (this->stateFlags & ENHORSE_STOPPING_NEIGH_SOUND && this->skin.skelAnime.curFrame > stillFrame) {
         this->actor.speedXZ = 0.0f;
         if (Rand_ZeroOne() > 0.5) {
             this->unk_21C = this->unk_228;
@@ -1487,7 +1533,7 @@ void EnHorse_Stopping(EnHorse* this, PlayState* play) {
         }
     }
 
-    if (this->skin.skelAnime.curFrame > 29.0f) {
+    if (this->skin.skelAnime.curFrame > stillFrame) {
         this->actor.speedXZ = 0.0f;
     } else if (this->actor.speedXZ > 3.0f && this->stateFlags & ENHORSE_FORCE_REVERSING) {
         this->actor.speedXZ = 3.0f;
@@ -1566,7 +1612,8 @@ void EnHorse_Reverse(EnHorse* this, PlayState* play) {
             this->noInputTimerMax = 0;
         }
     }
-    this->skin.skelAnime.playSpeed = this->actor.speedXZ * 0.5f * 1.5f;
+    this->skin.skelAnime.playSpeed =
+        this->actor.speedXZ * (this->type == HORSE_CAMEL ? CAMEL_WALK_PACE : 0.5f * 1.5f);
     if (SkelAnime_Update(&this->skin.skelAnime) && (f32)this->noInputTimer <= 0.0f &&
         EnHorse_PlayerCanMove(this, play) == true) {
         if (stickMag > 10.0f && Math_CosS(stickAngle) <= -0.5f) {
@@ -3521,11 +3568,13 @@ void EnHorse_Update(Actor* thisx, PlayState* play2) {
     this->curFrame = this->skin.skelAnime.curFrame;
     this->lastPos = thisx->world.pos;
     if (!(this->stateFlags & ENHORSE_INACTIVE)) {
-        if (this->action == ENHORSE_ACT_MOUNTED_GALLOP || this->action == ENHORSE_ACT_MOUNTED_TROT ||
-            this->action == ENHORSE_ACT_MOUNTED_WALK) {
+        // (the camel is not spurred on with carrots)
+        if ((this->action == ENHORSE_ACT_MOUNTED_GALLOP || this->action == ENHORSE_ACT_MOUNTED_TROT ||
+             this->action == ENHORSE_ACT_MOUNTED_WALK) &&
+            this->type != HORSE_CAMEL) {
             EnHorse_CheckBoost(this, play);
         }
-        if (this->playerControlled == true) {
+        if (this->playerControlled == true && this->type != HORSE_CAMEL) {
             EnHorse_RegenBoost(this, play);
         }
         Actor_MoveXZGravity(thisx);
@@ -3858,7 +3907,9 @@ void EnHorse_Draw(Actor* thisx, PlayState* play) {
     if (!(this->stateFlags & ENHORSE_INACTIVE)) {
         Gfx_SetupDL_25Opa(play->state.gfxCtx);
         this->stateFlags |= ENHORSE_DRAW;
-        if (this->stateFlags & ENHORSE_JUMPING) {
+        if (this->type == HORSE_CAMEL) {
+            Camel_Draw(this, play);
+        } else if (this->stateFlags & ENHORSE_JUMPING) {
             func_800A6360(thisx, play, &this->skin, EnHorse_PostDraw, EnHorse_OverrideLimbDraw, false);
         } else {
             func_800A6360(thisx, play, &this->skin, EnHorse_PostDraw, EnHorse_OverrideLimbDraw, true);

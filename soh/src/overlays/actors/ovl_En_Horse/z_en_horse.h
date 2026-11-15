@@ -86,7 +86,8 @@ typedef enum {
 
 typedef enum {
     /* 0 */ HORSE_EPONA,
-    /* 1 */ HORSE_HNI
+    /* 1 */ HORSE_HNI,
+    /* 2 */ HORSE_CAMEL // Play as Nabooru mod: spawned with ENHORSE_PARAM_CAMEL (see Camel.h)
 } HorseType;
 
 typedef void (*EnHorsePostdrawFunc)(struct EnHorse*, PlayState*);

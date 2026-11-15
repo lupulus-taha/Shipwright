@@ -16,6 +16,9 @@
 // sweep and the fighter's leaping spin, chained as a combo, each at its own speed. Link's swing only hosts them. Her
 // scimitars are the weapon: the hitboxes and trails of every attack come from her blades, not Link's hidden sword.
 //
+// On her camel (Camel.cpp) she has her own animations for climbing on, riding and getting off, and is drawn where
+// the camel's body carries her rather than where Link's actor is (see "camel").
+//
 // Animations she doesn't have herself are retargeted from other Gerudo by tools/build_nabooru_assets.py, which writes
 // them to play_as_nabooru.o2r for the mods folder. Every one of them falls back gracefully if it's missing.
 
@@ -23,6 +26,7 @@
 #include "soh/Enhancements/game-interactor/GameInteractor.h"
 #include "soh/ShipInit.hpp"
 #include "soh/ResourceManagerHelpers.h"
+#include "soh/Enhancements/PlayAsNabooru/Camel.h"
 #include <cstring>
 #include <string>
 #include <unordered_map>
@@ -38,6 +42,7 @@ extern "C" {
 #include "objects/object_geldb/object_geldb.h"
 #include "overlays/actors/ovl_En_Nb/z_en_nb.h"
 #include "overlays/actors/ovl_En_M_Thunder/z_en_m_thunder.h"
+#include "overlays/actors/ovl_En_Horse/z_en_horse.h"
 #include "align_asset_macro.h"
 extern PlayState* gPlayState;
 void ResourceMgr_UnregisterSkeleton(SkelAnime* skelAnime);
@@ -67,6 +72,7 @@ enum class Mode {
     Once, // plays start..end at `speed` frames per frame, then holds
     Pose, // holds frame `start`
     Attack, // one of her own attacks: start..end, the frame set by the attack (see "attacks")
+    Ride,   // on her camel: the frame its own animation is on (hers have the same number of frames)
 };
 
 constexpr f32 kCrossfadeStep = 0.2f; // a new move blends in over 5 frames
@@ -352,6 +358,19 @@ const Move kBonk = { .name = "Bonk",
                      .next = &kBonkSit };
 const Move kDeath = { "Death", GEN(Faint), nullptr, Mode::Once, 0, -1, 1.0f };
 // how she holds the scimitars when the current animation has no sword data (e.g. running with swords drawn)
+// On her camel (see "camel"): climbing on and getting off follow Link's own mounting and dismounting, which decide
+// when the camel is hers to ride and when she stands on the ground again; her seat follows the camel's gaits.
+const Move kMountL = { "MountL", GEN(MountL), nullptr, Mode::Sync };
+const Move kMountR = { "MountR", GEN(MountR), nullptr, Mode::Sync };
+const Move kDismountL = { "DismountL", GEN(DismountL), nullptr, Mode::Sync };
+const Move kDismountR = { "DismountR", GEN(DismountR), nullptr, Mode::Sync };
+const Move kRideIdle = { "RideIdle", GEN(RideIdle), nullptr, Mode::Loop };
+const Move kRideWalk = { "RideWalk", GEN(RideWalk), nullptr, Mode::Ride };
+const Move kRidePace = { "RidePace", GEN(RidePace), nullptr, Mode::Ride };
+const Move kRideGallop = { "RideGallop", GEN(RideGallop), nullptr, Mode::Ride };
+const Move kRideHalt = { "RideHalt", GEN(RideHalt), nullptr, Mode::Ride }; // reined in from a gallop
+const Move kRideBalk = { "RideBalk", GEN(RideBalk), nullptr, Mode::Ride }; // the camel will not go on
+
 const char* const kDefaultSwords = GEN_SWORDS(Carry);
 
 // Rules are checked in order against Link's animation name (after "gPlayerAnim_link_"); the first rule with a
@@ -363,6 +382,11 @@ struct Rule {
 
 const std::vector<Rule> kRules = {
     // "250jump" is the jump up to a ledge; "landing_roll" is handled by her own landing logic
+    // getting on and off a mount: hers on her camel (on Epona she has none: see RiderMove)
+    { { "uma_left_up" }, &kMountL },
+    { { "uma_right_up" }, &kMountR },
+    { { "uma_left_down" }, &kDismountL },
+    { { "uma_right_down" }, &kDismountR },
     { { "climb", "water_fall", "uma_", "swimer_", "step_up", "250jump", "landing_roll" }, nullptr },
     { { "power_kiru_start" }, &kSpinWindup },
     { { "power_kiru" }, &kSpinCharge }, // holding a charged spin, also while walking
@@ -495,6 +519,15 @@ f32 sStraighten = 0.0f; // how much of her sideways lean is taken out (strafing 
 
 bool sShowSwords = false;
 f32 sAttackFrame = 0.0f; // where her attack under way is in its animation (see "attacks")
+// On her camel (see "camel"): whether she is drawn in its seat's frame, how far above the ground under the camel the
+// ground she climbs from or onto is, and what is left of the step between where she was drawn and where she is.
+bool sSeated = false;
+bool sSeatChanged = false;
+f32 sSeatLift = 0.0f;
+f32 sDismountDrop = 0.0f;
+Vec3f sSeatShift = { 0.0f, 0.0f, 0.0f };
+Vec3f sLastRoot = { 0.0f, 0.0f, 0.0f };
+bool sLastRootKnown = false;
 Vec3f sPrevPos;
 const void* sLinkPrevAnim = nullptr; // Link's animation can stall while he moves (see Nabooru_OnPlayerUpdate)
 f32 sLinkPrevFrame = 0.0f;
@@ -550,6 +583,8 @@ void ReleaseSkeleton() {
     ReleaseLayer(sOverlay);
     sOverlayWeight = 0.0f;
     sFadeWeight = sFadeArmsWeight = 0.0f;
+    sSeated = sSeatChanged = sLastRootKnown = false;
+    sSeatShift = { 0.0f, 0.0f, 0.0f };
     ReleaseTrail();
 }
 
@@ -722,6 +757,11 @@ void StepLayer(Layer& layer, Player* player, f32 loopSpeed) {
         case Mode::Attack:
             layer.skel.curFrame = CLAMP(sAttackFrame, move->start, end);
             break;
+        case Mode::Ride:
+            if (player->rideActor != nullptr) {
+                layer.skel.curFrame = CLAMP(((EnHorse*)player->rideActor)->skin.skelAnime.curFrame, 0.0f, end);
+            }
+            break;
     }
     SkelAnime_Update(&layer.skel);
     if (move->lift > 0.0f) {
@@ -861,6 +901,46 @@ const Move* Locomotion(Player* player, f32* loopSpeed, bool* legsOnly) {
 }
 
 // (the hammer's: her own attacks stand their ground)
+// ---- camel
+// While she rides her camel, Link's actor rides it as he rides Epona; his animations for that follow the mount's.
+// Hers are her own, made against the camel (tools/camel_rider.py): their root is not a place by Link's actor but
+// in the camel's own frame, as its body carries it (Camel_GetSeat), so she is drawn there: her hands and feet stay
+// where they were put on its saddle and flanks whatever Link's skeleton does.
+bool IsMounting(const Move* move) {
+    return move == &kMountL || move == &kMountR;
+}
+
+bool IsDismounting(const Move* move) {
+    return move == &kDismountL || move == &kDismountR;
+}
+
+// what she does on her camel, given the move matched to Link's animation; nullptr when she is not on one
+const Move* RiderMove(Player* player, const Move* matched) {
+    if (!(player->stateFlags1 & PLAYER_STATE1_ON_HORSE) || !Camel_IsCamel(player->rideActor) ||
+        !HasResource(kRideIdle.anim)) {
+        return nullptr;
+    }
+    if (IsMounting(matched) || IsDismounting(matched)) {
+        return matched;
+    }
+    switch (((EnHorse*)player->rideActor)->animationIdx) {
+        case ENHORSE_ANIM_STOPPING:
+            return &kRideHalt;
+        case ENHORSE_ANIM_REARING:
+            return &kRideBalk;
+        case ENHORSE_ANIM_WALK:
+            return &kRideWalk;
+        case ENHORSE_ANIM_TROT:
+            return &kRidePace;
+        case ENHORSE_ANIM_GALLOP:
+        case ENHORSE_ANIM_LOW_JUMP:
+        case ENHORSE_ANIM_HIGH_JUMP:
+            return &kRideGallop;
+        default:
+            return &kRideIdle;
+    }
+}
+
 bool IsAttack(const Move* move) {
     return move == &kHeavy || move == &kHeavyEnd;
 }
@@ -1286,6 +1366,11 @@ void Nabooru_OnPlayerUpdate() {
     if (body != nullptr && body->next == nullptr && body->linkTo >= 0.0f && link->curFrame > body->linkTo) {
         body = nullptr; // done before Link: on to her idle (e.g. folding her arms) rather than holding still
     }
+    // on her camel, what she does there; her own animations for getting on and off belong to it alone
+    const Move* rider = RiderMove(player, body);
+    if (rider != nullptr || IsMounting(body) || IsDismounting(body)) {
+        body = rider;
+    }
     const Move* overlay = nullptr;
     f32 bodySpeed = 1.0f, overlaySpeed = 1.0f;
     bool freezeBody = false;
@@ -1328,7 +1413,10 @@ void Nabooru_OnPlayerUpdate() {
 
     // Landing after a long drop while moving on (Link rolls): a quick dip into her walk/run. (After shorter drops she
     // lands as from a hop, giving way to her walk/run if she moves on.)
-    if (!grounded) {
+    if (rider != nullptr) {
+        sInAir = false; // (she gets down from her camel by herself)
+        sLandingFrames = 0;
+    } else if (!grounded) {
         sAirPeakY = sInAir ? MAX(sAirPeakY, player->actor.world.pos.y) : player->actor.world.pos.y;
         sInAir = true;
         sLandingFrames = 0;
@@ -1457,6 +1545,26 @@ void Nabooru_OnPlayerUpdate() {
         StartCrossfade();
         sFadeStep = sBody.move->blendIn;
         sFadeArmsStep = (sBody.move->armsBlendIn > 0.0f) ? sBody.move->armsBlendIn : sFadeStep;
+    }
+    // Between the ground and her camel her root changes frames (see "camel"): its place is not blended from one
+    // into the other; the step between where she was and where she now is drawn is taken up in a few frames.
+    sSeatShift.x *= 0.6f;
+    sSeatShift.y *= 0.6f;
+    sSeatShift.z *= 0.6f;
+    if ((rider != nullptr) != sSeated) {
+        sSeated = rider != nullptr;
+        sSeatChanged = true;
+        sFadeFrom[0] = sBody.joints[0];
+    }
+    // The ground she climbs from, or gets down onto, may be higher or lower than where the camel stands: Link's
+    // actor makes that up little by little (unk_878 is what is left of it).
+    if (IsDismounting(sBody.move)) {
+        if (changed) {
+            sDismountDrop = player->unk_878;
+        }
+        sSeatLift = sDismountDrop - player->unk_878;
+    } else {
+        sSeatLift = IsMounting(sBody.move) ? -player->unk_878 : 0.0f;
     }
     sFadeWeight = MAX(sFadeWeight - sFadeStep, 0.0f);
     sFadeArmsWeight = MAX(sFadeArmsWeight - sFadeArmsStep, 0.0f);
@@ -2141,9 +2249,33 @@ static void PlayAsNabooru_DrawModel() {
     gDPSetEnvColor(POLY_OPA_DISP++, 0, 0, 0, 255);
     gSPSegment(POLY_OPA_DISP++, 0x0C, (uintptr_t)&D_80116280[2]);
     sBladeDrawn[0] = sBladeDrawn[1] = false;
-    // The player actor's model matrix (position, facing, 0.01 scale) is still current here.
+    // The player actor's model matrix (position, facing, 0.01 scale) is still current here. On her camel she is
+    // drawn in its seat's frame instead (see "camel").
+    MtxF frame;
+    if (!sSeated || !Camel_GetSeat(player->rideActor, &frame)) {
+        Matrix_Get(&frame);
+    } else {
+        frame.yw += sSeatLift;
+    }
+    Vec3f rootJoint = { (f32)sFinalJoints[0].x, (f32)sFinalJoints[0].y, (f32)sFinalJoints[0].z };
+    Vec3f root;
+    SkinMatrix_Vec3fMtxFMultXYZ(&frame, &rootJoint, &root);
+    if (sSeatChanged) {
+        sSeatChanged = false;
+        if (sLastRootKnown) {
+            sSeatShift = { sLastRoot.x - root.x, sLastRoot.y - root.y, sLastRoot.z - root.z };
+        }
+    }
+    frame.xw += sSeatShift.x;
+    frame.yw += sSeatShift.y;
+    frame.zw += sSeatShift.z;
+    sLastRoot = { root.x + sSeatShift.x, root.y + sSeatShift.y, root.z + sSeatShift.z };
+    sLastRootKnown = true;
+    Matrix_Push();
+    Matrix_Put(&frame);
     SkelAnime_DrawFlexOpa(gPlayState, sBody.skel.skeleton, sFinalJoints, sBody.skel.dListCount, NULL,
                           PlayAsNabooru_PostLimbDraw, &player->actor);
+    Matrix_Pop();
 
     CLOSE_DISPS(gPlayState->state.gfxCtx);
 }

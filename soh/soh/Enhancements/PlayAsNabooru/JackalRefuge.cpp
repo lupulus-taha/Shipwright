@@ -7,7 +7,8 @@
 // It also tints the picture slightly warm and turns on the game's hot-room heat haze (the slow wobble of the whole
 // view in Death Mountain Crater), without the heat timer that comes with real hot rooms.
 //
-// The area's inhabitants are spawned here as well: a pack of ten jackals (EnJackal.cpp) around the oasis pit.
+// The area's inhabitants are spawned here as well: a pack of ten jackals (EnJackal.cpp) around the oasis pit, and a
+// camel to ride (Camel.cpp) where the player arrives.
 
 #include <libultraship/bridge/consolevariablebridge.h>
 #include "soh/Enhancements/game-interactor/GameInteractor.h"
@@ -23,6 +24,7 @@ extern "C" {
 extern PlayState* gPlayState;
 void JackalRefuge_Draw(PlayState* play);
 Actor* Jackal_Spawn(PlayState* play, f32 x, f32 y, f32 z, s16 yaw);
+Actor* Camel_Spawn(PlayState* play, f32 x, f32 y, f32 z, s16 yaw);
 }
 
 #define JACKAL_REFUGE_DL(name) ((Gfx*)"__OTR__scenes/shared/jackal_refuge_scene/jackal_refuge_" name)
@@ -49,6 +51,8 @@ static const JackalHome JACKAL_HOMES[] = {
     { -1480.0f, 140.0f, 0x3000 }, // in the bowl
     { -1700.0f, -120.0f, -0x6000 },
 };
+// A camel waits near where the player arrives (-100, -1900, looking south): a little ahead, side on.
+static const JackalHome CAMEL_PLACE = { -10.0f, -1740.0f, 0x4000 };
 // The warm tint over the picture.
 static const Color_RGBA8 HEAT_TINT = { 255, 150, 40, 16 };
 
@@ -91,6 +95,7 @@ static void RegisterJackalRefuge() {
                 // (those in the bowl drop down onto its slope)
                 Jackal_Spawn(gPlayState, home.x, 0.0f, home.z, home.yaw);
             }
+            Camel_Spawn(gPlayState, CAMEL_PLACE.x, 0.0f, CAMEL_PLACE.z, CAMEL_PLACE.yaw);
         }
     });
     // after the whole world is drawn, under the HUD
