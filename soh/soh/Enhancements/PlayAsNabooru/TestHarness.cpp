@@ -28,6 +28,7 @@
 //   rise DY                   move the player up by DY (she falls back down; from 400 up the fall hurts)
 //   cvar NAME VALUE           set an integer CVar (not saved) and run what listens to it, as the menu does
 //   honoured 0|1              whether Nabooru is honoured by jackals (the save file's flag)
+//   sword master|spear        equip the Master Sword (her scimitars) or the Biggoron's Sword (her spear) on B
 //   savecheck                 write the game into save slot 1 and load it back, logging the mod's save flags
 //   warp HEX                  go to entrance HEX (follow with waitplay)
 //   camel X Y Z DEG           put a camel there, facing DEG (0 = +Z); "epona X Y Z DEG" puts Epona there instead.
@@ -73,6 +74,7 @@ extern GameState* gGameState;
 }
 
 void PlayAsNabooru_DebugState(const char** move, float* frame);
+int PlayAsNabooru_DebugWeapon();
 void PlayAsNabooru_DebugAttack(const char** name, float* frame, int* swinging, int* next, int* window, int* hitboxes);
 void PlayAsNabooru_DebugMotion(float* maxDegrees, int* joint, float* rootMove);
 void PlayAsNabooru_DebugRoot(short* x, short* y, short* z);
@@ -99,6 +101,7 @@ enum class Kind {
     Pos,
     CVar,
     Honoured,
+    Sword,
     SaveCheck,
     Pose,
     Warp,
@@ -237,6 +240,9 @@ void LoadScript(const char* path) {
             in >> step.text >> step.values[0];
         } else if (cmd == "savecheck") {
             step.kind = Kind::SaveCheck;
+        } else if (cmd == "sword") {
+            step.kind = Kind::Sword;
+            in >> step.text;
         } else if (cmd == "honoured") {
             step.kind = Kind::Honoured;
             in >> step.values[0];
@@ -339,7 +345,7 @@ void LogFrame() {
     fprintf(sLog,
             "%5d step%-3zu link %-34s %5.1f/%5.1f up %-26s %5.1f | nb %-22s %5.1f | y %7.1f vy %5.1f spd %5.1f "
             "st1 %08X st2 %08X bg %04X face %04X dir %04X mv %4.1f fall %d dpose %5.1f@%-2d droot %5.0f "
-            "fwd %7.1f lroot %6.1f nroot %6.1f atk %s:%.0f%c next %d/%d ws %d hb %d\n",
+            "fwd %7.1f lroot %6.1f nroot %6.1f atk %s:%.0f%c next %d/%d ws %d hb %d wp %d\n",
             sFrame, sStepIndex, ShortAnimName(link->animation), link->curFrame, link->endFrame,
             ShortAnimName(upper->animation), upper->curFrame, move, moveFrame, player->actor.world.pos.y,
             player->actor.velocity.y, player->actor.speedXZ, player->stateFlags1, player->stateFlags2,
@@ -347,7 +353,7 @@ void LogFrame() {
             sqrtf(SQ(player->actor.world.pos.x - sLastPos.x) + SQ(player->actor.world.pos.z - sLastPos.z)),
             player->fallDistance, motion, motionJoint, rootMove, forward, linkRoot, herRoot, attack, attackFrame,
             (strcmp(attack, "-") == 0) ? ' ' : swinging ? 's' : 'r', comboNext, comboWindow, player->meleeWeaponState,
-            hitboxes);
+            hitboxes, PlayAsNabooru_DebugWeapon());
     sLastPos = player->actor.world.pos;
     LogHorse(player);
 
@@ -639,6 +645,18 @@ void OnFrameStart() {
                 break;
             case Kind::Honoured:
                 PlayAsNabooru_SetHonouredByJackals(step.values[0] != 0.0f);
+                break;
+            case Kind::Sword:
+                if (player) {
+                    bool spear = step.text == "spear";
+                    Inventory_ChangeEquipment(EQUIP_TYPE_SWORD,
+                                              spear ? EQUIP_VALUE_SWORD_BIGGORON : EQUIP_VALUE_SWORD_MASTER);
+                    gSaveContext.equips.buttonItems[0] = spear ? ITEM_SWORD_BGS : ITEM_SWORD_MASTER;
+                    gSaveContext.bgsFlag = 1; // (not the Giant's Knife, which breaks)
+                    gSaveContext.swordHealth = 8;
+                    Player_SetEquipmentData(gPlayState, player);
+                    Interface_LoadItemIcon1(gPlayState, 0);
+                }
                 break;
             case Kind::SaveCheck: {
                 // (a game booted at a warp point plays on a file that is never saved: borrow slot 1)

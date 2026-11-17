@@ -121,6 +121,8 @@ JOBS = [
     Job("gPlayAsNabooruFaintAnim", GUARD, "gObjectGlaFaintAnim"),
     Job("gPlayAsNabooruCrouchAnim", GUARD, "gObjectGlaKneelAnim"),
     Job("gPlayAsNabooruCrouchingAnim", GUARD, "gObjectGlaKneelingAnim"),
+    Job("gPlayAsNabooruGuardIdleAnim", GUARD, "gObjectGlaIdleAnim", write=False),
+    Job("gPlayAsNabooruGuardWalkAnim", GUARD, "gObjectGlaWalkAnim", write=False),
     # white-clothed Gerudo (unarmed)
     Job("gPlayAsNabooruWhiteIdleAnim", WHITE, "gGerudoWhiteIdleAnim", write=False),
     Job("gPlayAsNabooruWhiteFoldArmsAnim", WHITE, "gGerudoWhiteUnusedFoldingArmsAnim", write=False),
@@ -1294,6 +1296,724 @@ def keep_blades_clear(frames, nb_limbs, clearance):
     return out
 
 
+# ---------------------------------------------------------------- the spear
+# Her second weapon is the spear of the guards (object_gla). Like the fighter's scimitars, the guard's spear never
+# moves relative to the hand that holds it, her right: it is drawn in her hand's own frame, its shaft running along
+# the hand's -Y (towards the blade) through SPEAR_GRIP. Where it points is down to her arm and wrist. The guard runs
+# and starts her sweep with her left hand on the shaft too; where the shaft lies in that hand is measured from her run.
+NB_L_HAND, NB_R_HAND = 10, 13
+SPEAR_GRIP = {NB_R_HAND: (np.array([470.0, 0.0, 136.0]), np.array([0.0, -1.0, 0.0])),
+              NB_L_HAND: (np.array([420.0, 50.0, -130.0]), np.array([0.05, -0.975, -0.22]) / 1.0008)}
+SPEAR_BUTT, SPEAR_NECK, SPEAR_TIP = 2634.0, -4044.0, -6982.0  # along the hand's Y: end of the shaft, blade, point
+SPEAR_VTX = ("object_gla", "gObjectGlaSpearVtx")
+ELBOW_POLE = {NB_L_ARM: np.array([0.55, -1.0, -0.45]), NB_R_ARM: np.array([-0.55, -1.0, -0.45])}  # out, down, back
+FOREARM_ROLL = 0.7  # how much of a hand's turn about her forearm the forearm takes up itself
+
+
+def unit(v):
+    v = np.asarray(v, float)
+    return v / np.linalg.norm(v)
+
+
+def direction(yaw, elevation):
+    """A direction in model space: `yaw` degrees round from straight ahead towards her left, `elevation` up."""
+    y, e = math.radians(yaw), math.radians(elevation)
+    return np.array([math.sin(y) * math.cos(e), math.sin(e), math.cos(y) * math.cos(e)])
+
+
+def largest_step(table, loops=False):
+    """-> the largest turn of any joint from one frame to the next (degrees), the joint and the frame it turns to."""
+    worst = (0.0, 0, 0)
+    for f in range(1, len(table) + (1 if loops else 0)):
+        for j in range(2, table.shape[1]):
+            a, b = quat_from_rot(rot_zyx(table[f - 1, j])), quat_from_rot(rot_zyx(table[f % len(table), j]))
+            turn = math.degrees(2 * math.acos(min(1.0, abs(float(a @ b)))))
+            worst = max(worst, (turn, j - 1, f % len(table)))
+    return worst
+
+
+def spear_of(frame, nb_limbs):
+    """-> where her right hand holds the shaft and the direction of the blade from there (model space)."""
+    W, P = fk(nb_limbs, frame)
+    offset, along = SPEAR_GRIP[NB_R_HAND]
+    return P[NB_R_HAND] + W[NB_R_HAND] @ offset, W[NB_R_HAND] @ along
+
+
+def set_world(frame, nb_limbs, limb, world):
+    W, _ = fk(nb_limbs, frame)
+    frame[limb + 1] = zyx_from_rot(W[nb_limbs[limb].parent].T @ world)
+
+
+def aim_bone(frame, nb_limbs, limb, child, towards):
+    """`limb` turned the shortest way so that its bone (to joint `child`) points along `towards`."""
+    _, P = fk(nb_limbs, frame)
+    now, want = unit(P[child] - P[limb]), unit(towards)
+    axis = np.cross(now, want)
+    if np.linalg.norm(axis) > 1e-9:
+        rotate_world(frame, nb_limbs, limb, axis, math.degrees(math.acos(np.clip(now @ want, -1, 1))))
+
+
+def reach(frame, nb_limbs, arm, wrist, pole=None):
+    """Two-bone IK: the arm bent so its wrist is at `wrist` (model space; as near as it reaches), the elbow out
+    towards `pole`."""
+    upper, fore, hand = arm
+    f = frame.copy()
+    _, P = fk(nb_limbs, f)
+    l1, l2 = np.linalg.norm(nb_limbs[fore].joint), np.linalg.norm(nb_limbs[hand].joint)
+    to = np.asarray(wrist, float) - P[upper]
+    d = float(np.clip(np.linalg.norm(to), abs(l1 - l2) + 1, l1 + l2 - 1))
+    n = unit(to)
+    a = (l1 * l1 - l2 * l2 + d * d) / (2 * d)
+    r = math.sqrt(max(l1 * l1 - a * a, 0.0))
+    pole = ELBOW_POLE[arm] if pole is None else np.asarray(pole, float)
+    side = pole - (pole @ n) * n
+    side = unit(side) if np.linalg.norm(side) > 1e-6 else unit(np.cross(n, [1.0, 0.0, 0.0]))
+    elbow = P[upper] + a * n + r * side
+    aim_bone(f, nb_limbs, upper, fore, elbow - P[upper])
+    _, P = fk(nb_limbs, f)
+    aim_bone(f, nb_limbs, fore, hand, P[upper] + d * n - P[fore])
+    return f
+
+
+ROLL_STEP = 10  # degrees between the ways round the shaft a hand is tried in
+ROLL_STEADY = 2.0  # what a hand turning round the shaft from one frame to the next costs, against a bent wrist
+SHAFT_SLIDE = 50.0  # model units: the steps in which a hand that cannot reach slides along the shaft
+HANDS_APART = 600.0  # her hands on the shaft are never closer together than this
+LENIENT = False  # while designing: a hand that cannot reach the spear is reported, not an error
+QUICK = False  # while designing: the spear is not kept clear of her and the ground (which takes minutes)
+
+
+def out_of_reach(message):
+    if not LENIENT:
+        sys.exit(message)
+    print("  !!", message)
+
+
+def grip_ways(frame, nb_limbs, arm, point, toward):
+    """Every way round the shaft the arm's hand could sit, closed round it at `point` (model space) of a spear
+    pointing along `toward` -> [(degrees round it, the frame with the arm reaching there, the hand's rotation in model
+    space, how far that bends her wrist (radians), how far the hand is off the shaft: it may be out of reach)]."""
+    hand = arm[2]
+    offset, along = SPEAR_GRIP[hand]
+    toward = unit(toward)
+    point = np.asarray(point, float)
+    ref = np.array([0.0, 1.0, 0.0]) if abs(toward[1]) < 0.95 else np.array([0.0, 0.0, 1.0])
+    u = unit(ref - (ref @ toward) * toward)
+    v = np.cross(toward, u)
+    side = unit(np.cross(along, [1.0, 0.0, 0.0]))  # with `along`, spans the hand's own frame
+    local = np.array([along, side, np.cross(along, side)]).T
+    ways = []
+    for angle in range(0, 360, ROLL_STEP):
+        a = math.radians(angle)
+        across = math.cos(a) * u + math.sin(a) * v
+        world = np.array([toward, across, np.cross(toward, across)]).T @ local.T
+        f = reach(frame, nb_limbs, arm, point - world @ offset)
+        _, P = fk(nb_limbs, f)
+        bend = math.acos(np.clip((world @ [1.0, 0.0, 0.0]) @ unit(P[hand] - P[arm[1]]), -1, 1))
+        off = P[hand] + world @ offset - point
+        ways.append((angle, f, world, bend, float(np.linalg.norm(off - (off @ toward) * toward))))
+    return ways
+
+
+def close_hand(frame, nb_limbs, arm, world, near=None):
+    """The arm's hand turned to `world` (its rotation in model space); her forearm takes up most of the hand's turn
+    about it. -> the frame, and that turn (radians; of the two ways round, the one nearer `near`: the last frame's)."""
+    W, _ = fk(nb_limbs, frame)
+    q = quat_from_rot(W[arm[1]].T @ world)
+    centre = 0.0 if near is None else near
+    twist = (2 * math.atan2(q[1], q[0]) - centre + math.pi) % (2 * math.pi) - math.pi + centre  # about its own X
+    f = frame.copy()
+    f[arm[1] + 1] = zyx_from_rot(rot_zyx(f[arm[1] + 1]) @ turn_matrix(X_AXIS, math.degrees(twist) * FOREARM_ROLL))
+    set_world(f, nb_limbs, arm[2], world)
+    return f, twist
+
+
+def steady_ways(options, frames):
+    """For each of `frames` (their numbers), one of its ways (see grip_ways) -> the index of each: her wrist bent
+    least over them all, the hand not jumping round the shaft from one frame to the next."""
+    def step(a, b):
+        d = math.radians((a[0] - b[0] + 180) % 360 - 180)
+        return ROLL_STEADY * d * d
+
+    cost = [[w[3] ** 2 + (w[4] / 100.0) ** 2 for w in options[0]]]
+    back = [[]]
+    for k in range(1, len(options)):
+        joined = frames[k] == frames[k - 1] + 1
+        cost.append([])
+        back.append([])
+        for w in options[k]:
+            j = min(range(len(options[k - 1])),
+                    key=lambda i: cost[k - 1][i] + (step(options[k - 1][i], w) if joined else 0.0))
+            cost[k].append(cost[k - 1][j] + (step(options[k - 1][j], w) if joined else 0.0) + w[3] ** 2 +
+                           (w[4] / 100.0) ** 2)
+            back[k].append(j)
+    pick = [min(range(len(cost[-1])), key=cost[-1].__getitem__)]
+    for k in range(len(options) - 1, 0, -1):
+        pick.append(back[k][pick[-1]])
+    return pick[::-1]
+
+
+def hold_spear_through(frames, nb_limbs, holds, what="spear", tolerance=60.0):
+    """`frames` (an animation, or part of one) with her hands on the spear. Per frame a hold: `grip`, where her right
+    hand holds it (model space), `toward`, the way its blade points, and optionally `left`: her left hand on the
+    shaft that far from her right (model units, towards the blade), or as near to that as it can reach (the shaft
+    slides through that hand), `weight` of the way from where the frame has that arm (1: on the shaft). A hand that
+    cannot reach the shaft is an error, unless it is letting go (weight < 1) or the hold is not `strict`."""
+    n = len(frames)
+    out, options = [], []
+    for i in range(n):
+        ways = grip_ways(frames[i], nb_limbs, NB_R_ARM, holds[i]["grip"], holds[i]["toward"])
+        near = [w for w in ways if w[4] <= tolerance]
+        if not near:
+            out_of_reach(f"{what} frame {i}: her right hand is {min(w[4] for w in ways):.0f} model units short of "
+                         "the spear")
+        options.append(near or ways)
+    twist = None
+    for i, k in enumerate(steady_ways(options, list(range(n)))):
+        f, twist = close_hand(options[i][k][1], nb_limbs, NB_R_ARM, options[i][k][2], twist)
+        out.append(f)
+
+    lefts = [i for i in range(n) if holds[i].get("left") is not None and holds[i].get("weight", 1.0) > 0.0]
+    options = []
+    for i in lefts:
+        grip, toward = np.asarray(holds[i]["grip"], float), unit(holds[i]["toward"])
+        _, P = fk(nb_limbs, out[i])
+        nearest = float((P[NB_L_ARM[0]] - grip) @ toward)  # the point of the shaft nearest her left shoulder
+        along = float(holds[i]["left"])
+        nearest = max(nearest, HANDS_APART) if along > 0 else min(nearest, -HANDS_APART)
+        while True:
+            ways = grip_ways(out[i], nb_limbs, NB_L_ARM, grip + along * toward, toward)
+            near = [w for w in ways if w[4] <= tolerance]
+            if near or abs(along - nearest) < 1.0:
+                break
+            along += float(np.clip(nearest - along, -SHAFT_SLIDE, SHAFT_SLIDE))
+        if not near:
+            if holds[i].get("weight", 1.0) >= 1.0 and holds[i].get("strict", True):
+                out_of_reach(f"{what} frame {i}: her left hand is {min(w[4] for w in ways):.0f} model units short "
+                             "of the spear")
+            near = [min(ways, key=lambda w: w[4])]  # as near as it gets
+        options.append(near)
+    if lefts:
+        twist = None
+        for (i, ways), k in zip(zip(lefts, options), steady_ways(options, lefts)):
+            f, twist = close_hand(ways[k][1], nb_limbs, NB_L_ARM, ways[k][2], twist)
+            weight = holds[i].get("weight", 1.0)
+            for limb in NB_L_ARM:
+                q = slerp(quat_from_rot(rot_zyx(out[i][limb + 1])), quat_from_rot(rot_zyx(f[limb + 1])), weight)
+                out[i][limb + 1] = zyx_from_rot(rot_from_quat(q))
+    return np.array(out)
+
+
+def hold_spear(frame, nb_limbs, grip, toward, left=None, tolerance=60.0, what="spear", strict=True):
+    """One frame with her hands on the spear (see hold_spear_through)."""
+    return hold_spear_through([frame], nb_limbs, [dict(grip=grip, toward=toward, left=left, strict=strict)], what,
+                              tolerance)[0]
+
+
+def spear_hold_from(body, nb_limbs, hand, aim, left=None, left_weight=1.0):
+    """A hold (see hold_spear_through) from: where her right hand holds the spear, `hand` (model units, model axes)
+    from her right shoulder as `body` has it; the way its blade points, `aim` = (yaw, elevation) degrees."""
+    _, P = fk(nb_limbs, body)
+    return dict(grip=P[NB_R_ARM[0]] + np.asarray(hand, float), toward=direction(*aim), left=left, weight=left_weight)
+
+
+def with_spear(body, nb_limbs, hand, aim, left=None, left_weight=1.0, what="spear", tolerance=60.0):
+    """`body` with her arms on the spear (see spear_hold_from)."""
+    return hold_spear_through([body], nb_limbs, [spear_hold_from(body, nb_limbs, hand, aim, left, left_weight)], what,
+                              tolerance)[0]
+
+
+EASE = {"linear": lambda t: t, "in": lambda t: t * t, "out": lambda t: 1 - (1 - t) * (1 - t), "smooth": smoothstep}
+
+
+def tween(keys, at):
+    """Values at frame `at` between keys: dicts with `at` (frame), numbers or tuples of numbers under other names,
+    and optionally `ease` (how the key is approached: linear, in, out or smooth)."""
+    if at <= keys[0]["at"]:
+        return dict(keys[0])
+    for a, b in zip(keys, keys[1:]):
+        if at <= b["at"]:
+            w = EASE[b.get("ease", "smooth")]((at - a["at"]) / (b["at"] - a["at"]))
+            out = {}
+            for name, value in b.items():
+                if name in ("at", "ease") or a.get(name) is None or value is None:
+                    out[name] = value
+                else:
+                    out[name] = (np.asarray(a[name], float) * (1 - w) + np.asarray(value, float) * w)
+            return out
+    return dict(keys[-1])
+
+
+def left_on_shaft(frame, nb_limbs):
+    """How far along the shaft from her right hand her left hand is (model units, towards the blade), and how far
+    off it."""
+    grip, toward = spear_of(frame, nb_limbs)
+    W, P = fk(nb_limbs, frame)
+    held = P[NB_L_HAND] + W[NB_L_HAND] @ SPEAR_GRIP[NB_L_HAND][0]
+    along = float((held - grip) @ toward)
+    return along, float(np.linalg.norm(held - grip - along * toward))
+
+
+class SpearClearance:
+    """Counts points of the spear (in her right hand) inside her body, other than the arm holding it (and her left
+    arm, with `two_handed`), and tells how far below the ground it reaches."""
+    SKIP = (NB_PONYTAIL,)  # her ponytail swings free of it
+
+    def __init__(self, nb_limbs, boxes):
+        self.limbs = nb_limbs
+        self.boxes = boxes
+        offset, _ = SPEAR_GRIP[NB_R_HAND]
+        shaft = [[offset[0], y, offset[2]] for y in np.arange(SPEAR_BUTT, SPEAR_NECK, -220.0)]
+        blade = read_vtx(*SPEAR_VTX)
+        blade = blade[blade[:, 1] < SPEAR_NECK + 200]
+        self.points = np.vstack([np.array(shaft), blade])
+
+    def world(self, frame):
+        W, P = fk(self.limbs, frame)
+        return P[NB_R_HAND] + (W[NB_R_HAND] @ self.points.T).T, W, P
+
+    def count(self, frame, two_handed=False):
+        return self.check(frame, two_handed)[0]
+
+    def lowest(self, frame):
+        return float(self.world(frame)[0][:, 1].min())
+
+    def check(self, frame, two_handed=False):
+        """-> how many of its points are inside her, and its lowest point's height."""
+        pts, W, P = self.world(frame)
+        skip = set(NB_R_ARM) | set(self.SKIP) | (set(NB_L_ARM) if two_handed else set())
+        n = 0
+        for i, (center, half) in self.boxes.items():
+            if i not in skip:
+                local = (W[i].T @ (pts - P[i]).T).T
+                n += int(np.all(np.abs(local - center) < half, axis=1).sum())
+        return n, float(pts[:, 1].min())
+
+
+# ---- how she moves with it
+# Out of combat she carries it as the guards do: at attention standing, shouldered walking, couched in both hands
+# running (their own animations, as they are). Ready to fight (Z-targeting) she stands and steps as the fighter
+# does, her arms as the guard's are when she runs: the spear couched at her right hip in both hands, pointing ahead
+# and a little up.
+COUCH_FRAME = 0  # of the guard's run
+
+
+def couched(body, run):
+    f = body.copy()
+    for limb in NB_L_ARM + NB_R_ARM:
+        f[limb + 1] = run[COUCH_FRAME][limb + 1]
+    return f
+
+
+def squared(frame, nb_limbs, stance_world, keep, lean=0.0, head=0.8):
+    """`frame` with her upper body kept `keep` of the way as it is in her stance (her left side leading), bent `lean`
+    degrees further forward; her head `head` of the way as in her stance, looking ahead."""
+    f = frame.copy()
+    steady_limb(f, nb_limbs, NB_TORSO, stance_world[NB_TORSO], keep)
+    bend_forward(f, nb_limbs, NB_TORSO, lean)
+    steady_limb(f, nb_limbs, NB_HEAD, stance_world[NB_HEAD], head)
+    return f
+
+
+def spear_hold(frame, nb_limbs):
+    """How `frame` holds the spear, as with_spear takes it: hand, aim, left."""
+    grip, toward = spear_of(frame, nb_limbs)
+    _, P = fk(nb_limbs, frame)
+    return dict(hand=tuple(grip - P[NB_R_ARM[0]]),
+                aim=(math.degrees(math.atan2(toward[0], toward[2])), math.degrees(math.asin(toward[1]))),
+                left=left_on_shaft(frame, nb_limbs)[0])
+
+
+def spear_moves(bodies, keys, nb_limbs, what):
+    """One frame per body, its arms on the spear as the keys say at that frame (see tween, with_spear; `lw` is
+    with_spear's left_weight)."""
+    holds = []
+    for i, body in enumerate(bodies):
+        k = tween(keys, i)
+        holds.append(spear_hold_from(body, nb_limbs, k["hand"], k["aim"], k.get("left"), float(k.get("lw", 1.0))))
+    return hold_spear_through(bodies, nb_limbs, holds, what)
+
+
+def at_frame(table, at):
+    """Frame `at` of an animation, between two frames if it is not whole."""
+    i = min(int(at), len(table) - 1)
+    return table[i] if at == i else blend_frames(table[i], table[min(i + 1, len(table) - 1)], at - i)
+
+
+def stepped(frame, nb_limbs, feet, base, forward=0.0, down=0.0, step=0.0, lift=0.0):
+    """`frame` with her hips `forward` and `down` (model units), her left foot `step` ahead of where `base` has it and
+    `lift` above the ground, her right foot where `base` has it."""
+    f = frame.copy()
+    f[0, 2] += forward
+    f[0, 1] -= down
+    W, P = fk(nb_limbs, base)
+    for leg, dz, up in ((NB_L_LEG, step, lift), (NB_R_LEG, 0.0, 0.0)):
+        f = place_foot(f, nb_limbs, feet, leg, P[leg[2]] + [0.0, 0.0, dz], feet.lowest(base, leg[2]) + up, 0,
+                       flat=W[leg[2]])
+    return f
+
+
+# ---- her attacks with it (see "attacks" in PlayAsNabooru.cpp)
+# The jab: a short thrust in both hands. Her weight goes onto her front leg and back as it does in the fighter's
+# slash, without that slash's turn of the shoulders: her left side stays leading, her right hand drives the shaft
+# forward through her left. Per frame: the frame of the slash her legs and hips are taken from, and how much further
+# her upper body bends forward (degrees).
+JAB_BODY = [(0, 0), (0.5, 0), (1, 0), (2.2, 4), (3, 7), (3.2, 7), (2.6, 5), (1.8, 3), (0.9, 1), (0, 0)]
+JAB_SQUARE = 0.9
+# Thrusting, the spear goes out from her right side and points in towards her middle, so that the end of its shaft
+# passes by her right hip, not through her.
+JAB = [dict(at=2, hand=(-1250, -1750, -500), aim=(14, 13), left=2900, ease="out"),  # drawn back
+       dict(at=4, hand=(-500, -800, 1650), aim=(10, 5), left=2713, ease="in"),  # out
+       dict(at=5, hand=(-480, -780, 1700), aim=(10, 5), left=2713, ease="out")]
+
+
+def make_jab(slash, stance, nb_limbs):
+    world = fk(nb_limbs, stance)[0]
+    rest = spear_hold(stance, nb_limbs)
+    bodies = [squared(at_frame(slash, s), nb_limbs, world, JAB_SQUARE, lean) for s, lean in JAB_BODY]
+    return spear_moves(bodies, [dict(at=0, **rest)] + JAB + [dict(at=len(bodies) - 1, **rest)], nb_limbs, "SpearJab")
+
+
+# The lunge: a long thrust in her right hand alone. The fighter's slash throws her right shoulder forward and her
+# left arm back: with it she steps in on her left foot and sinks into the thrust, her right arm straight behind the
+# spear, then draws back into her stance. Per frame: the frame of the slash, how far forward and down her hips go
+# beyond it (model units), how far ahead her left foot is and how high off the ground.
+LUNGE_BODY = [(0, 0, 0, 0, 0), (0.5, 0, 0, 0, 0), (1, 0, 0, 0, 100), (2, 150, 50, 300, 300), (3, 350, 130, 700, 250),
+              (4, 500, 200, 900, 0), (4.6, 520, 220, 900, 0), (5, 500, 210, 900, 0), (5, 480, 200, 900, 0),
+              (5.3, 420, 170, 900, 0), (5.8, 320, 120, 800, 150), (6.4, 200, 70, 550, 250), (7, 100, 30, 300, 200),
+              (7.7, 40, 10, 120, 80), (8.3, 0, 0, 0, 0), (8.7, 0, 0, 0, 0), (9, 0, 0, 0, 0)]
+LUNGE = [dict(at=2, hand=(-1250, -1700, -750), aim=(12, 9), left=2900, lw=1.0, ease="out"),  # drawn back
+         dict(at=4, hand=(-900, -1000, 900), aim=(11, 4), left=2000, lw=0.5, ease="in"),
+         dict(at=6, hand=(-550, -250, 1850), aim=(8, 2), left=1200, lw=0.0, ease="out"),  # at full reach
+         dict(at=8, hand=(-550, -250, 1850), aim=(8, 2), left=1200, lw=0.0),
+         dict(at=11, hand=(-1100, -900, 900), aim=(14, 7), left=2000, lw=0.3)]  # drawn back past her hip
+
+
+def make_lunge(slash, stance, nb_limbs, feet):
+    rest = dict(spear_hold(stance, nb_limbs), lw=1.0)
+    bodies = [stepped(at_frame(slash, s), nb_limbs, feet, slash[0], forward, down, step, lift)
+              for s, forward, down, step, lift in LUNGE_BODY]
+    return spear_moves(bodies, [dict(at=0, **rest)] + LUNGE + [dict(at=len(bodies) - 1, **rest)], nb_limbs,
+                       "SpearLunge")
+
+
+# The sweep is the guard's own, as it was made (the game never plays it): she draws the spear up to her left, steps
+# in and sweeps it level across her front to her right, then draws herself up to attention.
+SPEAR_SWEEP_FROM = 1
+
+
+def make_spear_sweep(attack, recover):
+    return np.concatenate([attack[SPEAR_SWEEP_FROM:], recover])
+
+
+# The charge: she runs at her enemy with the spear couched, as the guards run (their own run, from where her left
+# foot is planted ahead as it is in her stance), and thrusts it home in both hands as she pulls up.
+CHARGE_INTO_RUN = 3  # frames from her stance into the run
+CHARGE_RUN_FROM = 6  # the run's frame her first stride starts from
+CHARGE_STRIDES = 13  # frames of running: one cycle of the run
+CHARGE_THRUST = [(2.2, 4), (3, 7), (3.2, 7), (3.2, 7), (2.8, 6), (2.3, 4), (1.7, 3), (1.1, 1), (0.6, 0), (0.2, 0),
+                 (0, 0)]  # as JAB_BODY: pulling up into the thrust, then back into her stance
+
+
+def make_charge(run, slash, stance, nb_limbs):
+    world = fk(nb_limbs, stance)[0]
+    rest, running = spear_hold(stance, nb_limbs), spear_hold(run[CHARGE_RUN_FROM], nb_limbs)
+    first = run[CHARGE_RUN_FROM]
+    bodies = [blend_frames(stance, first, smoothstep((i + 1) / (CHARGE_INTO_RUN + 1))) for i in range(CHARGE_INTO_RUN)]
+    bodies += [run[(CHARGE_RUN_FROM + k) % len(run)] for k in range(1, CHARGE_STRIDES + 1)]
+    ran = len(bodies)  # the first frame of the thrust
+    thrust = [squared(at_frame(slash, s), nb_limbs, world, JAB_SQUARE, lean) for s, lean in CHARGE_THRUST]
+    bodies += [blend_frames(first, thrust[0], 0.6)] + thrust[1:]
+    keys = [dict(at=0, **rest), dict(at=CHARGE_INTO_RUN, **running), dict(at=ran - 1, **running),
+            dict(at=ran, hand=(-900, -1500, 200), aim=(10, 8), left=2713, ease="in"),
+            dict(at=ran + 2, hand=(-480, -780, 1700), aim=(10, 5), left=2713, ease="out"),
+            dict(at=ran + 4, hand=(-480, -780, 1700), aim=(10, 5), left=2713),
+            dict(at=len(bodies) - 1, **rest)]
+    return spear_moves(bodies, keys, nb_limbs, "SpearCharge")
+
+
+# The plunge, from the air: the spear raised in both hands over her right shoulder, point down, her left hand above
+# her right on the shaft (towards its end), knees drawn up; she drives it into the ground in front of her as she
+# lands in the fighter's landing crouch, and rises from that into her stance, her left hand letting go of the shaft
+# and taking it again ahead of her right. Frames: PLUNGE_AIR in the air, PLUNGE_HIT landing, then the fighter's
+# landing from PLUNGE_RISE_FROM.
+PLUNGE_AIR, PLUNGE_HIT, PLUNGE_RISE_FROM = 10, 5, 6
+PLUNGE_LEFT = -800  # her left hand on the shaft (towards its end: negative)
+PLUNGE_FALL = [dict(at=0, hand=(-500, 500, -500), aim=(8, -15), left=PLUNGE_LEFT, lw=1.0),
+               dict(at=4, hand=(-300, 900, -300), aim=(6, -38), left=PLUNGE_LEFT, lw=1.0, ease="out"),  # raised
+               dict(at=7, hand=(-200, 800, 0), aim=(5, -50), left=PLUNGE_LEFT, lw=1.0),
+               dict(at=9, hand=(0, 500, 500), aim=(3, -42), left=PLUNGE_LEFT, lw=1.0, ease="in")]  # coming down
+PLUNGE_LEAN = (4, 10, 14, 18)  # her upper body's bend forward in the air at the keys above (degrees)
+PLUNGE_STRIKE = dict(hand=(0, -500, 1250), aim=(0, -19), left=PLUNGE_LEFT, lw=1.0)
+PLUNGE_CROUCH = (2, 3, 4, 5, 5)  # frames of the fighter's landing she strikes in
+PLUNGE_REGRIP = (3, 5, 8)  # frames after landing: her left hand has let go, is ahead of her right, holds again
+
+
+def make_plunge(air, jump, stance, nb_limbs):
+    rest = dict(spear_hold(stance, nb_limbs), lw=1.0)
+    lean = [dict(at=k["at"], lean=v) for k, v in zip(PLUNGE_FALL, PLUNGE_LEAN)]
+    bodies = []
+    for i in range(PLUNGE_AIR):
+        f = air.copy()
+        bend_forward(f, nb_limbs, NB_TORSO, float(tween(lean, i)["lean"]))
+        bodies.append(f)
+    bodies += [jump[f] for f in PLUNGE_CROUCH]
+    landed = len(bodies)
+    rise = make_low_landing(jump, stance, stiff=0.0)[PLUNGE_RISE_FROM:]
+    bodies += list(rise)
+    struck = dict(at=landed + 1, **PLUNGE_STRIKE)
+    end = len(bodies) - 1
+    let_go, ahead, holds = (landed + k for k in PLUNGE_REGRIP)
+
+    def between(at):  # her right hand on its way from the strike to her stance
+        k = tween([struck, dict(at=end, **rest)], at)
+        return dict(at=at, hand=tuple(k["hand"]), aim=tuple(k["aim"]))
+
+    keys = PLUNGE_FALL + [dict(at=PLUNGE_AIR, ease="in", **PLUNGE_STRIKE), struck,
+                          dict(between(let_go), left=PLUNGE_LEFT, lw=0.0),
+                          dict(between(ahead), left=rest["left"], lw=0.0),
+                          dict(between(holds), left=rest["left"], lw=1.0), dict(at=end, **rest)]
+    return spear_moves(bodies, keys, nb_limbs, "SpearPlunge")
+
+
+# Her block: the shaft held across her in both hands, low at her right, high at her left, standing upright (the
+# body of her scimitar block).
+SPEAR_BLOCK = dict(hand=(-250, -1350, 950), aim=(78, 32), left=2900)
+
+
+def make_spear_guard(guard, nb_limbs):
+    return np.array([with_spear(guard[0], nb_limbs, what="SpearGuard", **SPEAR_BLOCK)])
+
+
+# ---- carrying it through everything else
+# With the spear in her right hand a frame of any of the fighter's animations has it where her right scimitar was.
+# Wherever it would go through her or into the ground, her wrist is turned (by up to 90 degrees about two axes), and
+# if that isn't enough her arm raised out to the side; chosen over the whole animation so that her wrist changes as
+# little as possible from frame to frame.
+SPEAR_WRIST_TURNS = [(a, b) for a in range(-90, 91, 15) for b in range(-90, 91, 15)]
+SPEAR_ARM_LIFTS = range(0, 61, 15)
+SPEAR_GROUND = -50  # model units: it may lie on the ground, not go into it
+
+
+def keep_spear_clear(frames, nb_limbs, spear, what, ground=SPEAR_GROUND, allow=0, two_handed=False):
+    """`frames` with her right wrist turned, and if need be that arm raised, wherever the spear would go through her
+    (more than `allow` points of it; with `two_handed`, her left arm is on it) or into the ground."""
+    out = np.array(frames).copy()
+    if QUICK:
+        return out
+    states = [(lift, a, b) for lift in SPEAR_ARM_LIFTS for a, b in SPEAR_WRIST_TURNS]
+
+    def apply(f, state):
+        lift, a, b = state
+        g = f.copy()
+        if lift:
+            rotate_world(g, nb_limbs, NB_R_ARM[0], Z_AXIS, -lift)
+        g[NB_R_HAND + 1] = zyx_from_rot(rot_zyx(g[NB_R_HAND + 1]) @ rot_zyx((int(a * 182), 0, int(b * 182))))
+        return g
+
+    def clear(g):
+        inside, lowest = spear.check(g, two_handed)
+        return inside <= allow and lowest >= ground
+
+    def effort(s):
+        return 0.05 * (abs(s[1]) + abs(s[2])) + 0.5 * s[0]
+
+    def change(s, t):
+        return ((s[1] - t[1]) ** 2 + (s[2] - t[2]) ** 2 + 4 * (s[0] - t[0]) ** 2) / 15
+
+    options, turned = [], []
+    for i, f in enumerate(out):
+        ok = [(0, 0, 0)] if clear(f) else [s for s in states if clear(apply(f, s))]
+        if not ok:
+            sys.exit(f"{what}: no clear place for the spear in frame {i}")
+        if ok[0] != (0, 0, 0):
+            turned.append(i)
+        options.append(ok)
+    if turned:
+        print(f"  {what}: her wrist turned to keep the spear clear in frames {turned}")
+    cost, back = [{s: effort(s) for s in options[0]}], [{}]
+    for k in range(1, len(out)):
+        cost.append({})
+        back.append({})
+        for s in options[k]:
+            p = min(cost[k - 1], key=lambda t: cost[k - 1][t] + change(t, s))
+            cost[k][s] = cost[k - 1][p] + change(p, s) + effort(s)
+            back[k][s] = p
+    s = min(cost[-1], key=cost[-1].get)
+    for k in range(len(out) - 1, -1, -1):
+        out[k] = apply(out[k], s)
+        s = back[k].get(s)
+    return out
+
+
+def regrip(frames, nb_limbs, weights, what="spear"):
+    """`frames` with her left hand brought onto the shaft (where it lies in her right hand), `weights` of the way
+    frame by frame, as near to where the guard holds it running as it can reach."""
+    holds = []
+    for f, weight in zip(frames, weights):
+        grip, toward = spear_of(f, nb_limbs)
+        holds.append(dict(grip=grip, toward=toward, left=2713.0, weight=weight, strict=False))
+    held = hold_spear_through(frames, nb_limbs, holds, what, tolerance=1e9)
+    out = np.array(frames).copy()
+    for limb in NB_L_ARM:  # (her right arm stays as it is)
+        out[:, limb + 1] = held[:, limb + 1]
+    return out
+
+
+# In the air she carries it in her right hand at her side, pointing ahead and up.
+SPEAR_AIR = dict(hand=(-600, -1300, 300), aim=(8, 25))
+# Hurt by a long fall she squats holding on to it, its butt on the ground in front of her (see HURT_LAND): where her
+# right hand holds it from her shoulder once she is down, and how upright it stands (yaw, elevation of the blade).
+SPEAR_HURT = dict(hand=(-350, 150, 1250), aim=(0, 84))
+SPEAR_HURT_REACH = 150.0  # (model units: as she comes down her hand may be this far off it for a frame)
+# Out of breath she leans on it: the spear stays as she holds it at attention while she bends over.
+
+
+def make_spear_tired(idle0, nb_limbs):
+    grip, toward = spear_of(idle0, nb_limbs)
+    out = make_tired(idle0, nb_limbs)
+    return hold_spear_through(out, nb_limbs, [dict(grip=grip, toward=toward)] * len(out), "SpearArmedTired")
+
+
+def make_spear_run_jump(run, nb_limbs, air):
+    """Her leap off a ledge with the spear couched: the guard's run carried into the air (see make_run_jump), her
+    arms and upper body as she runs."""
+    plain = make_run_jump(run, nb_limbs, air)
+    out = []
+    for (at, _, _, _), f in zip(RUN_JUMP, plain):
+        i = int(at)
+        upper = blend_frames(run[i], run[(i + 1) % len(run)], at - i)
+        g = f.copy()
+        for limb in (NB_TORSO, NB_HEAD) + NB_L_ARM + NB_R_ARM:
+            g[limb + 1] = upper[limb + 1]
+        out.append(g)
+    return np.array(out)
+
+
+def make_spear_hurt(rest, nb_limbs, feet, air, bare):
+    """Landing hurt with the spear (see make_hurt_landing): her left arm hangs, her right holds on to the spear, which
+    comes down from how she carries it in the air to stand on the ground in front of her; getting up, she draws it
+    to her as she holds it at attention (`rest`)."""
+    land, hold, rise = make_hurt_landing(rest, nb_limbs, feet, air, HURT_ARMS, None, bare)
+
+    def planted(f, w):
+        k = tween([dict(at=0, **SPEAR_AIR), dict(at=1, **SPEAR_HURT)], w)
+        hand = np.array(k["hand"], float)
+        g = with_spear(f, nb_limbs, hand, k["aim"], what="SpearHurt", tolerance=SPEAR_HURT_REACH)
+        grip, toward = spear_of(g, nb_limbs)
+        butt = grip[1] - SPEAR_BUTT * toward[1]  # how high the end of the shaft is
+        if w >= 1.0 or butt < 0.0:  # standing on the ground
+            hand[1] -= butt
+            g = with_spear(f, nb_limbs, hand, k["aim"], what="SpearHurt", tolerance=SPEAR_HURT_REACH)
+        return g
+
+    land = np.array([planted(f, smoothstep(i / 3)) for i, f in enumerate(land)])
+    hold = np.array([planted(f, 1.0) for f in hold])
+    out = []
+    for i, f in enumerate(rise):
+        eased = blend_frames(planted(f, 1.0), rest, smoothstep((i + 1) / len(rise)))
+        g = f.copy()
+        for limb in NB_R_ARM:
+            g[limb + 1] = eased[limb + 1]
+        grip, toward = spear_of(g, nb_limbs)
+        butt = grip[1] - SPEAR_BUTT * toward[1]
+        if butt < 0.0:  # (its end stays on the ground, not in it)
+            g = hold_spear(g, nb_limbs, grip - [0.0, butt, 0.0], toward, what="SpearHurtRise", tolerance=SPEAR_HURT_REACH)
+        out.append(g)
+    out[-1] = rest.copy()
+    return land, hold, np.array(out)
+
+
+# Hopping sideways from her stance she keeps the spear couched, her arms turning with her body; where her legs come up
+# past it (her trailing leg hopping to her left, her leading leg as she lands to her right) both hands lift it
+# clear: by SPEAR_HOP_LIFT (model units), as much of that as SPEAR_HOP_LIFTED says frame by frame (hop to her right:
+# True).
+SPEAR_HOP_LIFT = (-350.0, 800.0, 0.0)
+SPEAR_HOP_LIFTED = {True: [(4, 0.0), (6, 1.0), (8, 0.0)], False: [(0, 0.0), (1, 1.0), (5, 1.0), (7, 0.0)]}
+
+
+def make_spear_hop(hop, nb_limbs, lifted):
+    weights = [float(tween([dict(at=at, w=w) for at, w in lifted], i)["w"]) for i in range(len(hop))]
+    holds = []
+    for f, w in zip(hop, weights):
+        own = spear_hold(f, nb_limbs)
+        holds.append(spear_hold_from(f, nb_limbs, np.array(own["hand"]) + w * np.array(SPEAR_HOP_LIFT), own["aim"],
+                                     own["left"]))
+    out = hold_spear_through(hop, nb_limbs, holds, "SpearSideHop")
+    for i, w in enumerate(weights):  # (where it isn't lifted her arms are the guard's own)
+        if w == 0.0:
+            out[i] = hop[i]
+    return out
+
+
+def make_spear_set(tables, nb_limbs, feet, spear, relaxed, air, reflections):
+    """-> every animation of hers with the spear: name (as in gPlayAsNabooruSpear<name>Anim; where the same move has
+    an animation for her scimitars, <name> is that one's) -> (table, note)."""
+    T = lambda name: tables[f"gPlayAsNabooru{name}Anim"]
+    idle, walk, run = T("GuardIdle"), T("GuardWalk"), T("GuardRun")
+    neutral, slash, jump = T("Neutral"), T("Slash"), T("Jump")
+    stance, attention = couched(neutral[0], run), idle[0]
+    out = {}
+
+    def carried(name, frames, note, allow=0, two_handed=False):
+        out[name] = (keep_spear_clear(frames, nb_limbs, spear, f"Spear{name}", allow=allow, two_handed=two_handed),
+                     note)
+
+    out["ArmedIdle"] = (idle, "the guard standing at attention")
+    out["ArmedWalk"] = (walk, "the guard's walk, spear shouldered")
+    out["ArmedRun"] = (run, "the guard's run, spear couched in both hands")
+    lean = forward_lean(nb_limbs, run) - forward_lean(nb_limbs, walk) + 4.0
+    out["ArmedRunBack"] = (make_run_back(run, nb_limbs, lean), "the guard's run upright, for running backwards")
+    out["ArmedTired"] = (make_spear_tired(attention, nb_limbs), "bent over, leaning on the spear")
+    out["Neutral"] = (np.array([couched(f, run) for f in neutral]), "the fighter's stance, spear couched")
+    out["FightWalk"] = (np.array([couched(f, run) for f in T("FightWalk")]), "the fighter's steps, spear couched")
+    side = T("Sidestep")
+    out["Sidestep"] = (np.array([couched(f, run) for f in side]), "the fighter's sidestep, spear couched")
+    world = fk(nb_limbs, stance)[0]
+    mirrored = mirror_table(side, nb_limbs, reflections)
+    out["SidestepMirror"] = (np.array([couched(squared(f, nb_limbs, world, 0.85), run) for f in mirrored]),
+                             "the sidestep mirrored, her left side still leading")
+    out["Guard"] = (make_spear_guard(T("Guard"), nb_limbs), "blocking with the shaft")
+    # attacks
+    out["Jab"] = (make_jab(slash, stance, nb_limbs), "a short thrust in both hands")
+    out["Lunge"] = (make_lunge(slash, stance, nb_limbs, feet), "a long thrust, stepping in")
+    out["Sweep"] = (make_spear_sweep(T("GuardSlash"), T("GuardSlashRecover")),
+                    "the guard's unused sweep and her recovery to attention")
+    out["Charge"] = (make_charge(run, slash, stance, nb_limbs), "running in with the spear couched, then a thrust")
+    out["Plunge"] = (make_plunge(air, jump, stance, nb_limbs), "from the air: the spear driven down as she lands")
+    carried("SpinAttack", T("SpinAttack"), "the fighter's leaping spin, the spear swung round her")
+    # acrobatics and falls, the spear carried
+    carried("Flip", T("Flip"), "the fighter's backflip")
+    carried("Jump", jump, "the fighter's landing")
+    out["Air"] = (np.array([with_spear(air, nb_limbs, what="SpearAir", **SPEAR_AIR)]), "in the air")
+    out["RunJumpArmed"] = (make_spear_run_jump(run, nb_limbs, air), "leaping off a ledge, spear couched")
+    light = dict(stiff=LIGHT_LANDING_LEGS, nb_limbs=nb_limbs, upright=LIGHT_LANDING_UPRIGHT)
+    for name, rest, kind in (("LandLowArmed", attention, {}), ("LandLowStance", stance, {}),
+                             ("LandLightArmed", attention, light), ("LandLightStance", stance, light)):
+        carried(name, make_low_landing(jump, rest, **kind), "landing, the spear carried",
+                allow=5 if rest is attention else 0, two_handed=rest is stance)
+        if rest is stance:  # her left hand comes back onto the shaft as she settles
+            settled = out[name][0]
+            out[name] = (regrip(settled, nb_limbs, [smoothstep((i - 6) / 6) for i in range(len(settled))],
+                                f"Spear{name}"), out[name][1])
+    for right, suffix in ((True, "R"), (False, "L")):
+        hop = make_side_hop(stance, nb_limbs, feet, right, bare_arms=False)
+        hop = make_spear_hop(hop, nb_limbs, SPEAR_HOP_LIFTED[right])
+        inside = [spear.check(f, True)[0] for f in hop]
+        if any(inside):
+            sys.exit(f"SpearSideHopArmed{suffix}: the spear goes through her legs (points per frame: {inside})")
+        out[f"SideHopArmed{suffix}"] = (hop, "side hop from her stance, spear couched, lifted clear of her legs")
+    land, hold, rise = make_spear_hurt(attention, nb_limbs, feet, out["Air"][0][0], relaxed)
+    out["HurtLandArmed"] = (land, "hurt by a fall: landing in a squat, the spear planted")
+    out["HurtHoldArmed"] = (hold, "hurt by a fall: holding on to the spear")
+    out["HurtRiseArmed"] = (rise, "hurt by a fall: getting up to attention")
+    carried("Damage", T("Damage"), "the fighter's flinch")
+    carried("Defeat", T("Defeat"), "the fighter knocked down")
+    carried("BonkArmed", make_bonk(T("Defeat"), T("Crouch"), attention), "rolled into a wall", allow=5)
+    carried("KnockFrontArmed", T("KnockFront"), "knocked down from behind")
+    return out
+
+
 # Left/right limb pairs, and the reflection that maps each limb's local frame onto its mirror image's.
 NB_MIRROR = {1: 4, 2: 5, 3: 6, 8: 11, 9: 12, 10: 13}
 NB_MIRROR.update({b: a for a, b in NB_MIRROR.items()})
@@ -1415,8 +2135,15 @@ def main():
     ap.add_argument("--version", default="pal-1.0")
     ap.add_argument("--debug-c", type=Path, help="also write decomp-style C of each animation here (for Fast64)")
     ap.add_argument("--icons-preview", type=Path, help="also write the item icons, enlarged, to this PNG")
+    ap.add_argument("--sheets", type=Path, help="also draw contact sheets of the animations (see posesheet.py) here")
+    ap.add_argument("--sheet-filter", default="Spear", help="which animations to draw: a regular expression")
+    ap.add_argument("--lenient", action="store_true", help="report hands that cannot reach the spear, carry on")
+    ap.add_argument("--quick", action="store_true", help="skip keeping the spear clear of her (not for release)")
+    ap.add_argument("--steps", help="print how far her arms turn frame by frame in the spear animations matching this")
     args = ap.parse_args()
 
+    global LENIENT, QUICK
+    LENIENT, QUICK = args.lenient, args.quick
     ootanim.ASSETS = args.decomp / "extracted" / args.version / "assets" / "objects"
     ootanim.DECOMP_ASSETS = args.decomp / "assets" / "objects"
 
@@ -1463,6 +2190,7 @@ def main():
             write_debug_c(args.debug_c / f"{job.out}.c", job.out, table)
 
     def add(name, table, note, swords=None):
+        tables[f"gPlayAsNabooru{name}Anim"] = table
         resources[f"objects/object_nb/gPlayAsNabooru{name}Anim"] = encode_animation(table)
         if swords is not None:
             resources[f"objects/object_nb/gPlayAsNabooru{name}SwordsAnim"] = encode_animation(swords)
@@ -1591,6 +2319,39 @@ def main():
         sys.exit(f"mirror check failed: {err}")
     add("SidestepMirror", side_mirror, f"sidestep mirrored (max joint error {err:.2f})",
         mirror_swords(sword_tables["gPlayAsNabooruSidestepAnim"], reflections))
+
+    # with the spear (the guard's run as it is: the run above has her own arm swing)
+    tables["gPlayAsNabooruGuardRunAnim"] = retargeted["gPlayAsNabooruRunAnim"]
+    spear = SpearClearance(nb_limbs, clearance.boxes)
+    for name, (table, note) in make_spear_set(tables, nb_limbs, feet, spear, relaxed[0], air[0], reflections).items():
+        inside = [spear.check(f, True) for f in table]
+        turn, joint, at = largest_step(table)
+        print(f"  Spear{name}: most points of the spear inside her {max(n for n, _ in inside)}, its lowest point "
+              f"{min(low for _, low in inside):.0f}; largest turn of a joint {turn:.0f} degrees (joint {joint}, into "
+              f"frame {at})")
+        add(f"Spear{name}", table, note)
+        if args.steps and re.search(args.steps, name):  # how far each arm joint turns, frame by frame
+            for f in range(1, len(table)):
+                turns = [math.degrees(2 * math.acos(min(1.0, abs(float(
+                    quat_from_rot(rot_zyx(table[f - 1, j + 1])) @ quat_from_rot(rot_zyx(table[f, j + 1])))))))
+                    for j in NB_L_ARM + NB_R_ARM]
+                grip, toward = spear_of(table[f], nb_limbs)
+                print(f"    {f:2d}: left arm {turns[0]:4.0f} {turns[1]:4.0f} {turns[2]:4.0f}  right arm {turns[3]:4.0f} "
+                      f"{turns[4]:4.0f} {turns[5]:4.0f}  grip {grip.round(0)} left hand {left_on_shaft(table[f], nb_limbs)[0]:.0f} along, "
+                      f"{left_on_shaft(table[f], nb_limbs)[1]:.0f} off")
+    if args.sheets:
+        import posesheet
+        body = posesheet.Body("object_nb", nb_limbs)
+        mesh = posesheet.Mesh("object_gla", "gObjectGlaSpearDL")
+        for name, table in tables.items():
+            short = name[len("gPlayAsNabooru"): -len("Anim")]
+            if not re.search(args.sheet_filter, short):
+                continue
+            every = max(1, -(-len(table) // 24))
+            shown = list(range(0, len(table), every))
+            weapons = (lambda k, W, P: [posesheet.held(mesh, W, P, NB_R_HAND)]) if short.startswith("Spear") else None
+            posesheet.sheet(args.sheets / f"{short}.png", body, table[shown], views=(20, 100), weapons=weapons,
+                            labels=shown, title=short, cell=330, cols=min(6, len(shown)), span=14500.0, ahead=0.66)
 
     # item icons: her scimitars for the Master Sword, the Gerudo spear for the Biggoron Sword
     item_icons = {"Scimitars": icons.scimitars_icon(), "Spear": icons.spear_icon()}

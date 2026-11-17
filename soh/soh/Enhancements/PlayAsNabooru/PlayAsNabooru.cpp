@@ -16,6 +16,9 @@
 // sweep and the fighter's leaping spin, chained as a combo, each at its own speed. Link's swing only hosts them. Her
 // scimitars are the weapon: the hitboxes and trails of every attack come from her blades, not Link's hidden sword.
 //
+// Her second weapon is the spear of the Gerudo guards, in place of the Biggoron's Sword (see "the spear"): carried
+// as they carry it, with its own stance, block and attacks: thrusts, the guards' sweep, a charge with it couched.
+//
 // On her camel (Camel.cpp) she has her own animations for climbing on, riding and getting off, and is drawn where
 // the camel's body carries her rather than where Link's actor is (see "camel").
 //
@@ -40,6 +43,7 @@ extern "C" {
 #include "variables.h"
 #include "objects/object_nb/object_nb.h"
 #include "objects/object_geldb/object_geldb.h"
+#include "objects/object_gla/object_gla.h"
 #include "overlays/actors/ovl_En_Nb/z_en_nb.h"
 #include "overlays/actors/ovl_En_M_Thunder/z_en_m_thunder.h"
 #include "overlays/actors/ovl_En_Horse/z_en_horse.h"
@@ -53,6 +57,7 @@ s32 func_80837818(Player* player);                             // the attack the
 void func_80837530(PlayState* play, Player* player, s32 arg2); // starts a spin attack's charge effect
 void func_80833A20(Player* player, s32 meleeWeaponState);      // sets the weapon's state (sound as it goes active)
 void func_80832318(Player* player);                            // the weapon goes idle
+void func_80837918(Player* player, s32 quadIndex, u32 dmgFlags); // sets what a weapon hitbox does
 extern f32 sSwordTypes[];                                      // sword trail types by melee weapon
 }
 
@@ -155,6 +160,34 @@ const Move kComboSpin = { .name = "ComboSpin",
                           .start = 10,
                           .end = 33,
                           .blendIn = 0.34f };
+// With the spear (see "the spear"): a jab in both hands, a lunge stepping in, the guards' sweep with their recovery to
+// attention; and the charge, which is not part of the combo.
+const Move kSpearJab = {
+    .name = "SpearJab", .anim = GEN(SpearJab), .mode = Mode::Attack, .start = 0, .end = 9, .blendIn = 0.5f
+};
+const Move kSpearLunge = {
+    .name = "SpearLunge", .anim = GEN(SpearLunge), .mode = Mode::Attack, .start = 0, .end = 16, .blendIn = 0.5f
+};
+const Move kSpearSweep = {
+    .name = "SpearSweep", .anim = GEN(SpearSweep), .mode = Mode::Attack, .start = 0, .end = 18, .blendIn = 0.5f
+};
+const Move kSpearCharge = {
+    .name = "SpearCharge", .anim = GEN(SpearCharge), .mode = Mode::Attack, .start = 0, .end = 26, .blendIn = 0.5f
+};
+// from behind her block: the thrust of her jab
+const Move kSpearGuardJab = {
+    .name = "SpearGuardJab", .anim = GEN(SpearJab), .mode = Mode::Sync, .start = 2, .end = 5, .blendIn = 0.5f
+};
+// Link's jump attack is her plunge: in the air with the spear raised point down (as long as Link is in the air),
+// driving it into the ground as she lands, rising into her stance.
+constexpr f32 kPlungeLift = 800.0f;
+const Move kPlungeAir = {
+    .name = "PlungeAir", .anim = GEN(SpearPlunge), .mode = Mode::Sync, .start = 0, .end = 9, .lift = kPlungeLift
+};
+const Move kPlungeHit = {
+    .name = "PlungeHit", .anim = GEN(SpearPlunge), .mode = Mode::Once, .start = 10, .end = 14, .blendIn = 0.5f
+};
+const Move kPlungeEnd = { .name = "PlungeEnd", .anim = GEN(SpearPlunge), .mode = Mode::Sync, .start = 15, .end = 25 };
 // A stab from behind Link's shield (4 frames): the cut of her slash, out of her guard at once.
 const Move kGuardSlash = { .name = "GuardSlash",
                            .anim = GEN(Slash),
@@ -475,6 +508,7 @@ const Move* MatchRule(const void* linkAnim) {
 
 // Player speeds (units per frame) at which her cycles play at their natural speed.
 constexpr f32 kWalkReferenceSpeed = 3.0f;
+constexpr f32 kSpearWalkReferenceSpeed = 2.2f; // the guards' walk, the spear shouldered
 constexpr f32 kRunReferenceSpeed = 4.0f;
 constexpr f32 kFightWalkReferenceSpeed = 2.0f;
 constexpr f32 kStrafeReferenceSpeed = 2.5f;
@@ -517,7 +551,8 @@ f32 sFadeArmsWeight = 0.0f;
 f32 sFadeArmsStep = kCrossfadeStep;
 f32 sStraighten = 0.0f; // how much of her sideways lean is taken out (strafing slowly)
 
-bool sShowSwords = false;
+bool sShowSwords = false; // a weapon in her hands: her scimitars, or...
+bool sSpear = false;      // ...the spear
 f32 sAttackFrame = 0.0f; // where her attack under way is in its animation (see "attacks")
 // On her camel (see "camel"): whether she is drawn in its seat's frame, how far above the ground under the camel the
 // ground she climbs from or onto is, and what is left of the step between where she was drawn and where she is.
@@ -541,6 +576,7 @@ bool sHurtLanding = false; // landing from a fall that hurt
 const Move* sHop = nullptr; // the side hop under way, and the height she took off from
 f32 sHopFloorY = 0.0f;
 std::string sForcedName; // test harness: show one animation frame instead of mirroring Link
+bool sForcedSpear = false; // (one of her animations with the spear)
 f32 sForcedFrame = 0.0f;
 f32 sForcedSwordsFrame = -1.0f;
 Move sForced;
@@ -588,13 +624,45 @@ void ReleaseSkeleton() {
     ReleaseTrail();
 }
 
-f32 LastFrame(const Move* move) {
-    return Animation_GetLastFrame((AnimationHeader*)move->anim);
+// A move's animation with the spear, if it has one: the generated animation named like the move's own with "Spear"
+// in front (gPlayAsNabooruSpear<Name>Anim for gPlayAsNabooru<Name>Anim). The guards' own animations, made with the
+// spear in hand, need none.
+const char* SpearAnim(const Move* move) {
+    static std::unordered_map<const Move*, std::string> sCache;
+    if (move == &sForced) {
+        return nullptr;
+    }
+    auto it = sCache.find(move);
+    if (it == sCache.end()) {
+        static const std::string kPrefix = "gPlayAsNabooru";
+        std::string path = move->anim;
+        size_t at = path.find(kPrefix);
+        if (at == std::string::npos || path.compare(at + kPrefix.size(), 5, "Spear") == 0) {
+            path.clear();
+        } else {
+            path.insert(at + kPrefix.size(), "Spear");
+            if (!ResourceMgr_FileExists(path.c_str())) {
+                path.clear();
+            }
+        }
+        it = sCache.emplace(move, path).first;
+    }
+    return it->second.empty() ? nullptr : it->second.c_str();
 }
 
-// the animation for a move, armed or empty-handed
+// the animation for a move: with the spear, with her scimitars, or empty-handed
 const char* AnimFor(const Move* move) {
+    if (sSpear) {
+        if (const char* spear = SpearAnim(move)) {
+            return spear;
+        }
+    }
     return (!sShowSwords && move->bareAnim != nullptr && HasResource(move->bareAnim)) ? move->bareAnim : move->anim;
+}
+
+// (a move's animations have the same frames for either weapon and for empty hands, except those that loop)
+f32 LastFrame(const Move* move) {
+    return Animation_GetLastFrame((AnimationHeader*)AnimFor(move));
 }
 
 f32 EndFrame(const Move* move) {
@@ -678,15 +746,20 @@ void MixTranslation(Vec3s& a, const Vec3s& b, f32 weight) {
 // Switches a layer to a move; returns whether it changed. Blending into it is done on her final pose.
 bool SetMove(Layer& layer, const Move* move) {
     const char* anim = AnimFor(move);
+    f32 last = Animation_GetLastFrame((AnimationHeader*)anim);
     if (move == layer.move) {
-        if (anim != layer.anim) { // drew or put away her scimitars mid-move: same frame, other animation
-            layer.skel.animation = (AnimationHeader*)anim;
+        if (anim != layer.anim) { // drew or put away her weapon mid-move: same frame, other animation
+            if (move->mode == Mode::Loop) { // (which may be shorter)
+                Animation_Change(&layer.skel, (AnimationHeader*)anim, layer.skel.playSpeed,
+                                 MIN(layer.skel.curFrame, last), last, ANIMMODE_LOOP_INTERP, 0.0f);
+            } else {
+                layer.skel.animation = (AnimationHeader*)anim;
+            }
             layer.anim = anim;
             return true;
         }
         return false;
     }
-    f32 last = LastFrame(move);
     // (interpolated: a move played slower than its frames, or synced to Link, would otherwise hold each frame and jump)
     if (move->mode == Mode::Loop) {
         Animation_Change(&layer.skel, (AnimationHeader*)anim, 1.0f, 0.0f, last, ANIMMODE_LOOP_INTERP, 0.0f);
@@ -845,7 +918,7 @@ const Move* LocomotionMove(Player* player, f32* loopSpeed, bool* legsOnly) {
     bool settingOff = LinkSettingOff(player);
     if (speed <= kMovingThreshold && !settingOff) {
         if (player->stateFlags1 & PLAYER_STATE1_TALKING) {
-            return &kHips;
+            return sSpear ? &kIdleSwords : &kHips; // (at attention, as the guards talk)
         }
         if (IsTargeting(player) && sShowSwords && HasResource(kStance.anim)) {
             return &kStance;
@@ -869,7 +942,7 @@ const Move* LocomotionMove(Player* player, f32* loopSpeed, bool* legsOnly) {
                 *loopSpeed = CLAMP(speed / kFightWalkReferenceSpeed, 0.5f, 2.5f);
                 return &kFightWalk;
             }
-            *loopSpeed = Cadence(speed, kWalkReferenceSpeed);
+            *loopSpeed = Cadence(speed, sSpear ? kSpearWalkReferenceSpeed : kWalkReferenceSpeed);
             return &kWalk;
         case Dir::Back:
             if (speed > kRunThreshold && HasResource(kRunBack.anim)) {
@@ -945,9 +1018,21 @@ bool IsAttack(const Move* move) {
     return move == &kHeavy || move == &kHeavyEnd;
 }
 
+// With the spear, what she does where she would use her scimitars so: Link's jump attack is her plunge, his stab
+// from behind his shield her jab, and she talks standing at attention (nullptr: as she stands).
+const Move* WithSpear(const Move* move) {
+    return (move == &kJumpSlashAir)   ? &kPlungeAir
+           : (move == &kJumpSlashHit) ? &kPlungeHit
+           : (move == &kJumpSlashEnd) ? &kPlungeEnd
+           : (move == &kGuardSlash)   ? &kSpearGuardJab
+           : (move == &kHips)         ? nullptr
+                                      : move;
+}
+
 // moves that give way to her walk/run when Link moves while his animation is stalled (see Nabooru_OnPlayerUpdate)
 bool YieldsToLocomotion(const Move* move) {
-    return IsAttack(move) || move == &kGuardSlash || move == &kSpinEnd || move == &kLandQuick ||
+    return IsAttack(move) || move == &kGuardSlash || move == &kSpearGuardJab || move == &kSpinEnd ||
+           move == &kPlungeEnd || move == &kLandQuick ||
            move == &kBackflipEnd || move == &kJumpSlashEnd || move == &kLand || move == &kLandShort ||
            move == &kLandShortStance || move == &kLandDrop || move == &kLandDropStance || move == &kSideHopLandR ||
            move == &kSideHopLandL;
@@ -1124,6 +1209,17 @@ void KeepFeetDown(Player* player) {
 //   2. the spear guard's sweep, which the game never plays: a step in and a level cut from her left to her right
 //   3. the fighter's leaping spin, both blades around her, carrying her forward: the finisher
 //
+// With the spear (Link's Biggoron's Sword) they are others, built on its reach:
+//
+//   1. a jab: a short thrust in both hands, her weight going onto her front leg and back
+//   2. a lunge: she steps in and thrusts at full reach with her right arm alone, her left thrown back
+//   3. the guards' sweep (which the game never plays): the spear swept level across her front, from which she
+//      draws herself up to attention as they do: the finisher
+//
+// and, Z-targeting, A is a charge where Link would leap into a jump attack: she runs in with the spear couched, as
+// the guards run, and thrusts it home; it hits as hard as his jump attack. (His jump attack itself, which he still
+// makes when B is pressed in the air, is her plunge: see WithSpear.)
+//
 // Pressing B again during an attack goes on to the next one as soon as the blade is through; pressing it while she
 // recovers, or shortly after, does too. Otherwise the combo starts over. The finisher ends the combo: B does nothing
 // until its swing is over, however much it is mashed. Link's swing action still hosts each attack
@@ -1143,18 +1239,35 @@ struct Attack {
     f32 leapFrom = -1.0f; // frames during which she moves forward at `leapSpeed`
     f32 leapTo = -1.0f;
     f32 leapSpeed = 0.0f;
+    bool heavy = false; // hits as a jump attack does
 };
 
 // The fighter's spin carries her 120 units (8 frames at speed 10, which is 15 units a frame); Link's finishers carry
 // him about 30. Hers: 40.
-const Attack kCombo[] = {
+const Attack kScimitarCombo[] = {
     { &kComboSlash, 7.0f, 2.0f, 3.0f, 6.0f, false, false },
     { &kComboSweep, 6.0f, 0.0f, 1.0f, 4.0f, true, false },
     { &kComboSpin, 25.0f, 13.0f, 13.0f, 23.0f, true, true, 13.0f, 20.0f, 3.4f },
 };
+// The lunge carries her 24 units; the charge 13 strides of the guards' run, some 140 units.
+const Attack kSpearCombo[] = {
+    { &kSpearJab, 6.0f, 2.0f, 3.0f, 5.0f, false, false },
+    { &kSpearLunge, 9.0f, 3.0f, 4.0f, 8.0f, false, false, 3.0f, 6.0f, 4.0f },
+    { &kSpearSweep, 8.0f, 1.0f, 2.0f, 7.0f, false, true },
+};
+const Attack kSpearChargeAttack = { &kSpearCharge, 21.0f, 3.0f, 4.0f, 20.0f, false, true, 3.0f, 15.0f, 7.0f, true };
+constexpr u32 kHeavyDamage = 0x04000000; // (the Biggoron's Sword's jump attack)
 constexpr s32 kComboWindow = 12; // frames after a swing during which B goes on with the combo
 
+struct Combo {
+    const Attack* steps;
+    s32 count;
+};
+
 const Attack* sAttack = nullptr; // her attack under way: its swing, then its recovery
+bool sAttackEndsCombo = false;   // it is the last of its combo (or stands alone)
+const Attack* sComboOf = nullptr; // the combo sComboNext counts through
+bool sChargeAsked = false;       // the attack Link is about to set up is her charge
 bool sSwinging = false;          // the swing (Link's swing action runs)
 bool sAttackStarted = false;     // this frame
 bool sAttackTicked = false;      // its frame has been advanced this frame
@@ -1172,10 +1285,27 @@ bool HoldsSword(Player* player) {
     return weapon >= 1 && weapon <= 3;
 }
 
-// Her own attacks apply: a sword in hand, her animations installed.
-bool HasOwnAttacks(Player* player) {
-    return HoldsSword(player) && HasResource(kComboSlash.anim) && HasResource(kComboSweep.anim) &&
-           HasResource(kComboSpin.anim);
+// The spear's animations are installed.
+bool HasSpear() {
+    return HasResource(kSpearJab.anim) && HasResource(kSpearLunge.anim) && HasResource(kSpearSweep.anim) &&
+           HasResource(kSpearCharge.anim) && HasResource(kPlungeAir.anim) && HasResource(GEN(SpearArmedIdle));
+}
+
+// Link holds the Biggoron's Sword (or the Giant's Knife, whole or broken): her spear.
+bool HoldsSpear(Player* player) {
+    return Player_GetMeleeWeaponHeld(player) == 3 && HasSpear();
+}
+
+// Her attacks with what she holds; none if their animations aren't installed.
+Combo ComboFor(Player* player) {
+    if (HoldsSpear(player)) {
+        return { kSpearCombo, ARRAY_COUNT(kSpearCombo) };
+    }
+    if (HoldsSword(player) && HasResource(kComboSlash.anim) && HasResource(kComboSweep.anim) &&
+        HasResource(kComboSpin.anim)) {
+        return { kScimitarCombo, ARRAY_COUNT(kScimitarCombo) };
+    }
+    return { nullptr, 0 };
 }
 
 // Link's slashes, stabs and their finishers (not his jump or spin attacks, nor the hammer)
@@ -1191,22 +1321,35 @@ void EndAttack() {
 
 // The last attack of her combo is under way.
 bool IsFinisher() {
-    return sAttack == &kCombo[ARRAY_COUNT(kCombo) - 1];
+    return sAttack != nullptr && sAttackEndsCombo;
 }
 
-// Link has set up an attack: if it's a slash, it becomes the next step of her combo.
+// Link has set up an attack: if it's a slash, it becomes the next step of her combo (or her charge).
 void Attack_OnStart(Player* player) {
     EndAttack();
-    if (!IsGroundSlash(player->meleeWeaponAnimation) || !HasOwnAttacks(player)) {
+    Combo combo = ComboFor(player);
+    if (!IsGroundSlash(player->meleeWeaponAnimation) || combo.count == 0) {
         sComboTimer = 0;
         return;
     }
-    s32 step = (sComboTimer > 0) ? sComboNext : 0;
-    sAttack = &kCombo[step];
+    if (sChargeAsked) {
+        sAttack = &kSpearChargeAttack;
+        sAttackEndsCombo = true;
+        sComboNext = 0;
+    } else {
+        s32 step = (sComboTimer > 0 && sComboOf == combo.steps) ? sComboNext : 0;
+        sAttack = &combo.steps[step];
+        sAttackEndsCombo = step == combo.count - 1;
+        sComboNext = (step + 1) % combo.count;
+        sComboOf = combo.steps;
+    }
+    if (sAttack->heavy) {
+        func_80837918(player, 0, kHeavyDamage);
+        func_80837918(player, 1, kHeavyDamage);
+    }
     sAttackFrame = sAttack->move->start;
     sSwinging = sAttackStarted = true;
     sChainBuffered = false;
-    sComboNext = (step + 1) % ARRAY_COUNT(kCombo);
     sComboTimer = 0;
     player->skelAnime.movementFlags = 0; // Link's animation doesn't move her
     player->unk_845 = 0;                 // nor does his own combo count (it would play his finishers)
@@ -1219,7 +1362,8 @@ bool Attack_SetWeaponState(Player* player) {
         // Landing a jump attack, Link's sword is only active for two frames; her cut takes four.
         bool landing = player->meleeWeaponAnimation == PLAYER_MWA_JUMPSLASH_FINISH ||
                        player->meleeWeaponAnimation == PLAYER_MWA_FLIPSLASH_FINISH;
-        if (landing && sShowSwords && HoldsSword(player) && sBody.move == &kJumpSlashHit && !OnceDone(sBody)) {
+        if (landing && sShowSwords && HoldsSword(player) && (sBody.move == &kJumpSlashHit || sBody.move == &kPlungeHit) &&
+            !OnceDone(sBody)) {
             func_80833A20(player, 1);
             return true;
         }
@@ -1273,6 +1417,17 @@ bool Attack_SwingFinished(Player* player, PlayState* play, bool linkDone) {
         }
         return false;
     }
+    return true;
+}
+
+// Z-targeting, A with the spear in hand: her charge, where Link would leap into a jump attack. Returns whether it is.
+bool Attack_StartCharge(Player* player, PlayState* play) {
+    if (!HoldsSpear(player)) {
+        return false;
+    }
+    sChargeAsked = true;
+    func_80837948(play, player, PLAYER_MWA_STAB_2H); // (any slash: it only hosts hers)
+    sChargeAsked = false;
     return true;
 }
 
@@ -1331,12 +1486,22 @@ void Nabooru_OnPlayerUpdate() {
                   player->leftHandType == PLAYER_MODELTYPE_LH_SWORD_2 ||
                   player->leftHandType == PLAYER_MODELTYPE_LH_BGS ||
                   player->leftHandType == PLAYER_MODELTYPE_LH_HAMMER || shielding;
+    // The spear is the Biggoron's Sword in Link's hand. Blocking with empty hands, she takes out the weapon she
+    // has equipped.
+    sSpear = sShowSwords && HasSpear() &&
+             (player->leftHandType == PLAYER_MODELTYPE_LH_BGS ||
+              (shielding && Player_GetMeleeWeaponHeld(player) == 0 &&
+               player->leftHandType != PLAYER_MODELTYPE_LH_HAMMER &&
+               CUR_EQUIP_VALUE(EQUIP_TYPE_SWORD) == EQUIP_VALUE_SWORD_BIGGORON));
     // Link's shield is up the moment he raises it: so are her blades
     bool raisingGuard = shielding && !sWasShielding;
     sWasShielding = shielding;
 
     if (!sForcedName.empty()) {
         EndAttack();
+        if (sForcedSpear) {
+            sShowSwords = sSpear = true;
+        }
         SetMove(sBody, &sForced);
         StepLayer(sBody, player, 0.0f);
         sOverlayWeight = 0.0f;
@@ -1366,6 +1531,9 @@ void Nabooru_OnPlayerUpdate() {
     if (body != nullptr && body->next == nullptr && body->linkTo >= 0.0f && link->curFrame > body->linkTo) {
         body = nullptr; // done before Link: on to her idle (e.g. folding her arms) rather than holding still
     }
+    if (sSpear) {
+        body = WithSpear(body);
+    }
     // on her camel, what she does there; her own animations for getting on and off belong to it alone
     const Move* rider = RiderMove(player, body);
     if (rider != nullptr || IsMounting(body) || IsDismounting(body)) {
@@ -1379,8 +1547,8 @@ void Nabooru_OnPlayerUpdate() {
     if (YieldsToLocomotion(body) && sLinkStalledFrames >= 2 && moving) {
         body = nullptr;
     }
-    if (body == &kAirborne && (sBody.move == &kBackflip || sBody.move == &kJumpSlashAir || sBody.move == &kSideHopR ||
-                               sBody.move == &kSideHopL)) {
+    if (body == &kAirborne && (sBody.move == &kBackflip || sBody.move == &kJumpSlashAir || sBody.move == &kPlungeAir ||
+                               sBody.move == &kSideHopR || sBody.move == &kSideHopL)) {
         // Link briefly plays his fall between a flip and its landing (or a side hop and its landing, when the ground
         // falls away): finish the flip, hold the hop's last frame in the air instead
         body = sBody.move;
@@ -1475,7 +1643,7 @@ void Nabooru_OnPlayerUpdate() {
         }
     } else {
         sKeepFolded = 0;
-        if (body == &kGuardSlash) {
+        if (body == &kGuardSlash || body == &kSpearGuardJab) {
             sOverlayWeight = 0.0f; // her guard opens at once
         }
         if (IsAttack(body) && stepDistance > kAttackStepThreshold && HasResource(kFightWalk.anim)) {
@@ -1723,13 +1891,18 @@ const char* ItemName(u32 item) {
 
 void ChargeAlongScimitars();
 void UpdateBlades(Player* player);
+void UpdateSpear(Player* player);
 
 void Nabooru_OnPlayerDraw(bool isFirstPerson) {
     if (isFirstPerson || !sBody.ready || gPlayState == nullptr) {
         return;
     }
     ::PlayAsNabooru_DrawModel();
-    UpdateBlades(GET_PLAYER(gPlayState));
+    if (sSpear) {
+        UpdateSpear(GET_PLAYER(gPlayState));
+    } else {
+        UpdateBlades(GET_PLAYER(gPlayState));
+    }
     ChargeAlongScimitars();
 }
 
@@ -1793,6 +1966,20 @@ void RegisterPlayAsNabooru() {
         PlayState* play = va_arg(args, PlayState*);
         if (IsHer(player)) {
             *should = Attack_SwingFinished(player, play, *should);
+        }
+    });
+    COND_VB_SHOULD(VB_PLAYER_START_JUMP_SLASH, enabled, {
+        Player* player = va_arg(args, Player*);
+        PlayState* play = va_arg(args, PlayState*);
+        if (IsHer(player) && Attack_StartCharge(player, play)) {
+            *should = false;
+        }
+    });
+    // She blocks with the spear's shaft, in both hands, where Link cannot raise his shield beside a two-handed sword.
+    COND_VB_SHOULD(VB_PLAYER_SHIELD_TWO_HANDED, enabled, {
+        Player* player = va_arg(args, Player*);
+        if (IsHer(player) && HoldsSpear(player)) {
+            *should = true;
         }
     });
     COND_VB_SHOULD(VB_PLAYER_UPDATE_MELEE_WEAPON_INFO, enabled, {
@@ -1859,6 +2046,9 @@ constexpr f32 kLinkBladeLengths[] = { 4000.0f, 3000.0f, 5500.0f }; // by En_M_Th
 MtxF sBladeMtx[2];    // her scimitars (left, right hand) at the hilt, along the chord...
 MtxF sScimitarMtx[2]; // ...and the scimitar limbs themselves: recorded as she is drawn
 bool sBladeDrawn[2];
+MtxF sSpearMtx; // her spear (see "the spear"), recorded as she is drawn
+bool sSpearDrawn = false;
+void ChargeAlongSpear(Player* player, EnMThunder* charge);
 EnMThunder* sHiddenCharge = nullptr; // the charge whose own (straight) glow is hidden for its draw, and its alpha
 u8 sHiddenChargeAlpha = 0;
 
@@ -1979,6 +2169,12 @@ void RestoreSpinCharge() {
 void ChargeAlongScimitars() {
     Player* player = GET_PLAYER(gPlayState);
     EnMThunder* charge = FindSpinCharge();
+    if (sSpear) {
+        if (charge != nullptr && sSpearDrawn) {
+            ChargeAlongSpear(player, charge);
+        }
+        return;
+    }
     if (!sShowSwords || charge == nullptr || !sBladeDrawn[0] || !sBladeDrawn[1]) {
         return;
     }
@@ -2020,6 +2216,84 @@ EffectBlure* LeftTrail(PlayState* play) {
         Effect_Add(play, &sLeftTrail, EFFECT_BLURE2, 0, 0, &sInit);
     }
     return (EffectBlure*)Effect_GetByIndex(sLeftTrail);
+}
+
+// ------------------------------------------------------------------------------------------------ the spear
+//
+// The guards' spear (object_gla) hangs off her right hand as their own does, without turning: in her hand's space
+// its shaft runs along -Y through kSpearShaft, the blade from its neck to its point below. Its trail comes from the
+// blade; it hits with the blade and the shaft below it, to a little past the point: one hitbox spans its sweep since
+// the last frame, as her scimitars' do, and since a thrust sweeps nothing, another lies flat along it, that wide to
+// either side.
+constexpr Vec3f kSpearTrailBase = { 470.0f, -4100.0f, 136.0f };
+constexpr Vec3f kSpearTrailTip = { -150.0f, -6950.0f, 136.0f };
+constexpr Vec3f kSpearHitBase = { 470.0f, -2400.0f, 136.0f };
+constexpr Vec3f kSpearHitTip = { -230.0f, -7750.0f, 136.0f }; // 8 units past the point
+constexpr f32 kSpearHitHalfWidth = 9.0f;
+// a charged spin's glow and sparkles: along the top of the shaft and the blade
+constexpr Vec3f kSpearGlowFrom = { 470.0f, -3000.0f, 136.0f };
+constexpr f32 kSpearGlowLength = 3900.0f;
+
+void UpdateSpear(Player* player) {
+    PlayState* play = gPlayState;
+    sBladeHits = 0;
+    if (!sShowSwords || !HoldsSpear(player) || player->meleeWeaponState == 0 || player->actor.scale.y < 0.0f ||
+        !sSpearDrawn) {
+        return;
+    }
+    auto placed = [](Vec3f point) {
+        Vec3f world;
+        SkinMatrix_Vec3fMtxFMultXYZ(&sSpearMtx, &point, &world);
+        return world;
+    };
+    Vec3f base = placed(kSpearTrailBase), tip = placed(kSpearTrailTip);
+    WeaponInfo* trail = &player->meleeWeaponInfo[0];
+    bool fresh = trail->active == 0;
+    if (func_80090480(play, NULL, trail, &tip, &base) && !(player->stateFlags1 & PLAYER_STATE1_SHIELDING) &&
+        !CVarGetInteger(CVAR_ENHANCEMENT("DisableLinkSwordTrail"), 0)) {
+        if (EffectBlure* blure = (EffectBlure*)Effect_GetByIndex(player->meleeWeaponEffectIndex)) {
+            EffectBlureShip_ChangeType(blure, (s32)sSwordTypes[Player_GetMeleeWeaponHeld(player)]);
+            if (fresh) {
+                EffectBlure_AddSpace(blure); // not joined to the last attack's trail
+            }
+            EffectBlure_AddVertex(blure, &trail->tip, &trail->base);
+        }
+    }
+    // (as for Link's sword)
+    if (player->meleeWeaponState > 0 && (player->meleeWeaponAnimation < PLAYER_MWA_SPIN_ATTACK_1H ||
+                                         (player->stateFlags2 & PLAYER_STATE2_SPIN_ATTACKING))) {
+        base = placed(kSpearHitBase);
+        tip = placed(kSpearHitTip);
+        func_80090480(play, &player->meleeWeaponQuads[0], &player->meleeWeaponInfo[1], &tip, &base);
+        // flat along it: across the way it points, level (or across her, if it points straight up or down)
+        Vec3f along = { tip.x - base.x, tip.y - base.y, tip.z - base.z };
+        Vec3f side = { along.z, 0.0f, -along.x };
+        if (SQ(side.x) + SQ(side.z) < 0.01f * (SQ(along.x) + SQ(along.y) + SQ(along.z))) {
+            side = { Math_CosS(player->actor.shape.rot.y), 0.0f, -Math_SinS(player->actor.shape.rot.y) };
+        }
+        f32 width = kSpearHitHalfWidth / sqrtf(SQ(side.x) + SQ(side.z));
+        side = { side.x * width, 0.0f, side.z * width };
+        WeaponInfo* flat = &player->meleeWeaponInfo[2];
+        flat->tip = { tip.x + side.x, tip.y, tip.z + side.z };
+        flat->base = { base.x + side.x, base.y, base.z + side.z };
+        flat->active = 1;
+        Vec3f farTip = { tip.x - side.x, tip.y, tip.z - side.z }, farBase = { base.x - side.x, base.y, base.z - side.z };
+        func_80090480(play, &player->meleeWeaponQuads[1], flat, &farTip, &farBase);
+        sBladeHits = 2;
+    }
+}
+
+// A charged spin's glow and sparkles along the spear: the charge's own (straight) glow fits it as it is.
+void ChargeAlongSpear(Player* player, EnMThunder* charge) {
+    f32 scale = kSpearGlowLength / kLinkBladeLengths[MIN(charge->swordType, ARRAY_COUNT(kLinkBladeLengths) - 1)];
+    Matrix_Push();
+    Matrix_Put(&sSpearMtx);
+    Matrix_Translate(kSpearGlowFrom.x, kSpearGlowFrom.y, kSpearGlowFrom.z, MTXMODE_APPLY);
+    Matrix_RotateZ(-(f32)M_PI / 2.0f, MTXMODE_APPLY); // Link's blade runs along +X, hers along -Y
+    Matrix_Scale(scale, scale, scale, MTXMODE_APPLY);
+    Matrix_Translate(0.0f, -kLinkBladeY, 0.0f, MTXMODE_APPLY);
+    Matrix_Get(&player->mf_9E0);
+    Matrix_Pop();
 }
 
 void UpdateBlades(Player* player) {
@@ -2083,6 +2357,11 @@ void PlayAsNabooru_DebugAttack(const char** name, float* frame, int* swinging, i
     *hitboxes = sBladeHits;
 }
 
+// For tools: what she has in her hands (0 nothing, 1 her scimitars, 2 the spear).
+int PlayAsNabooru_DebugWeapon() {
+    return sSpear ? 2 : sShowSwords ? 1 : 0;
+}
+
 // For tools: the test harness logs her current move and frame.
 void PlayAsNabooru_DebugState(const char** move, float* frame) {
     *move = (sBody.move != nullptr) ? sBody.move->name : "-";
@@ -2126,6 +2405,7 @@ void PlayAsNabooru_DebugMotion(float* maxDegrees, int* joint, float* rootMove) {
 void PlayAsNabooru_DebugForce(const char* name, float frame, const char* swords, float swordsFrame) {
     sForcedSwordsFrame = swordsFrame;
     sForcedName = name;
+    sForcedSpear = sForcedName.rfind("Spear", 0) == 0; // (shown with the spear in her hand)
     if (sForcedName.empty()) {
         sBody.move = nullptr;
         return;
@@ -2167,6 +2447,17 @@ static void PlayAsNabooru_DrawSword(PlayState* play, bool leftHand) {
     gSPDisplayList(POLY_OPA_DISP++, (Gfx*)(leftHand ? gGerudoRedSkelLimbsLimb_00A39CDL_009460
                                                     : gGerudoRedSkelLimbsLimb_00A360DL_0097D0));
     Matrix_Pop();
+    CLOSE_DISPS(play->state.gfxCtx);
+}
+
+// The spear in her right hand: the current matrix is her hand's, the spear hangs off it as it is (the guards' rig).
+static void PlayAsNabooru_DrawSpear(PlayState* play) {
+    OPEN_DISPS(play->state.gfxCtx);
+    Matrix_Get(&sSpearMtx);
+    sSpearDrawn = true;
+    gSPMatrix(POLY_OPA_DISP++, MATRIX_NEWMTX(play->state.gfxCtx), G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_MODELVIEW);
+    gSPDisplayList(POLY_OPA_DISP++, (Gfx*)gGerudoPurpleGlaiveDL);
+    gDPSetEnvColor(POLY_OPA_DISP++, 0, 0, 0, 255); // (its blade's shine set another; her limbs are drawn with this)
     CLOSE_DISPS(play->state.gfxCtx);
 }
 
@@ -2233,7 +2524,11 @@ static void PlayAsNabooru_PostLimbDraw(PlayState* play, s32 limbIndex, Gfx** dLi
     static Vec3f sAnkle = { 0.0f, 0.0f, 0.0f };
     Actor_SetFeetPos((Actor*)data, limbIndex, NB_LIMB_L_FOOT, &sAnkle, NB_LIMB_R_FOOT, &sAnkle);
 
-    if (sShowSwords && (limbIndex == NB_LIMB_L_HAND || limbIndex == NB_LIMB_R_HAND)) {
+    if (sShowSwords && sSpear) {
+        if (limbIndex == NB_LIMB_R_HAND) {
+            PlayAsNabooru_DrawSpear(play);
+        }
+    } else if (sShowSwords && (limbIndex == NB_LIMB_L_HAND || limbIndex == NB_LIMB_R_HAND)) {
         PlayAsNabooru_DrawSword(play, limbIndex == NB_LIMB_L_HAND);
     }
 }
@@ -2248,7 +2543,7 @@ static void PlayAsNabooru_DrawModel() {
     gSPSegment(POLY_OPA_DISP++, 0x09, (uintptr_t)sEyeTextures[sEyeIndex]);
     gDPSetEnvColor(POLY_OPA_DISP++, 0, 0, 0, 255);
     gSPSegment(POLY_OPA_DISP++, 0x0C, (uintptr_t)&D_80116280[2]);
-    sBladeDrawn[0] = sBladeDrawn[1] = false;
+    sBladeDrawn[0] = sBladeDrawn[1] = sSpearDrawn = false;
     // The player actor's model matrix (position, facing, 0.01 scale) is still current here. On her camel she is
     // drawn in its seat's frame instead (see "camel").
     MtxF frame;
