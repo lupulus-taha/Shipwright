@@ -188,7 +188,7 @@ const Move kPlungeAir = {
 };
 constexpr f32 kLeapGroundFrames = 1.0f; // Link's frames of the leap during which her feet stay on the ground
 const Move kLeapAir = {
-    .name = "LeapAir", .anim = GEN(SpearLeap), .mode = Mode::Sync, .start = 0, .end = 9, .span = 0.8f, .blendIn = 0.5f
+    .name = "LeapAir", .anim = GEN(SpearLeap), .mode = Mode::Sync, .start = 0, .end = 11, .span = 0.8f, .blendIn = 0.5f
 };
 const Move kPlungeHit = {
     .name = "PlungeHit", .anim = GEN(SpearPlunge), .mode = Mode::Once, .start = 10, .end = 14, .blendIn = 0.5f
@@ -1226,7 +1226,8 @@ void KeepFeetDown(Player* player) {
 // With the spear (Link's Biggoron's Sword) they are others, built on its reach:
 //
 //   1. a jab: a short thrust in both hands, her weight going onto her front leg and back
-//   2. a lunge: she steps in and thrusts at full reach with her right arm alone, her left thrown back
+//   2. a lunge: she steps through, right foot past her left, and thrusts at full reach with her right arm alone, side
+//      on, her shoulders and her left arm thrown back in line with the spear; then steps back
 //   3. the guards' sweep (which the game never plays): the spear swept level across her front, from which she
 //      draws herself up to attention as they do: the finisher
 //
@@ -1265,11 +1266,11 @@ const Attack kScimitarCombo[] = {
     { &kComboSweep, 6.0f, 0.0f, 1.0f, 4.0f, true, false },
     { &kComboSpin, 25.0f, 13.0f, 13.0f, 23.0f, true, true, 13.0f, 20.0f, 3.4f },
 };
-// (A speed set on one frame moves her on the next, 1.5 units per unit of it.) The lunge carries her 16 units over its
-// frames 3-6, as LUNGE_LEAP in the asset builder has it: her feet are placed for it.
+// The lunge steps through and back where she stands (the game doesn't move her): its swing is over once her right foot
+// is down behind her again. (A speed set on one frame moves her on the next, 1.5 units per unit of it.)
 const Attack kSpearCombo[] = {
     { &kSpearJab, 6.0f, 2.0f, 3.0f, 5.0f, false, false },
-    { &kSpearLunge, 9.0f, 3.0f, 4.0f, 8.0f, false, false, 2.0f, 5.0f, 8.0f / 3.0f },
+    { &kSpearLunge, 11.0f, 3.0f, 4.0f, 8.0f, false, false },
     { &kSpearSweep, 8.0f, 1.0f, 2.0f, 7.0f, false, true },
 };
 // The charge: the guards' run (frames kChargeRunFrom up to kChargeRunTo, looped) covers 5.3 units a frame, her charge
@@ -1473,9 +1474,19 @@ bool Attack_SetWeaponState(Player* player) {
         player->unk_844 = 2;
     }
     if (sAttackFrame >= sAttack->trailFrom && sAttackFrame <= sAttack->hitTo) {
+        s32 state = (sAttackFrame >= sAttack->hitFrom) ? 1 : -1;
+        if (sAttack == &kSpearChargeAttack && sAttackFrame < kChargeThrust) {
+            // Running, the spear goes in without a swing or a cry (setting the weapon going makes both): those are
+            // the thrust's, whenever it comes.
+            player->meleeWeaponState = state;
+            return true;
+        }
+        if (sAttackJumped) {
+            player->meleeWeaponState = 0; // (the thrust: swung anew)
+        }
         u8 comboCount = player->unk_845;
         player->unk_845 = sAttack->hard ? 3 : 0; // (what makes the swing sound heavy)
-        func_80833A20(player, (sAttackFrame >= sAttack->hitFrom) ? 1 : -1);
+        func_80833A20(player, state);
         player->unk_845 = comboCount;
     } else {
         func_80832318(player);
