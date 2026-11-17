@@ -124,7 +124,8 @@ def draw(image, origin, scale, tris, colours, yaw, pitch=12.0):
 def sheet(path, body, frames, views=(30, 100), weapons=None, labels=None, cell=230, span=13000.0, cols=None,
           title=None, aspect=0.72, ahead=0.5):
     """One row of cells per view, one cell per frame: `cell` pixels wide for `span` model units, `aspect` times as
-    high, the model's origin `ahead` of the way across (more room in front of her seen from the side: > 0.5).
+    high, the model's origin `ahead` of the way across (more room in front of her seen from the side: > 0.5). A view
+    is a yaw (see draw), or (yaw, pitch) to see her from higher up.
     `weapons(frame_index, W, P)` -> [(triangles, colours)]."""
     n = len(frames)
     cols = cols or n
@@ -143,7 +144,8 @@ def sheet(path, body, frames, views=(30, 100), weapons=None, labels=None, cell=2
         for more, more_colours in extra:
             tris = np.concatenate([tris, more])
             colours = colours + list(more_colours)
-        for v, yaw in enumerate(views):
+        for v, view in enumerate(views):
+            yaw, pitch = view if isinstance(view, tuple) else (view, 12.0)
             x0 = (k % cols) * cell
             y0 = head + ((k // cols) * len(views) + v) * high
             tile = Image.new("RGB", (cell, high), (250, 250, 250))
@@ -151,8 +153,9 @@ def sheet(path, body, frames, views=(30, 100), weapons=None, labels=None, cell=2
             tpen.line([(0, floor), (cell, floor)], fill=(200, 200, 200))
             # (seen from her left she faces left: the room ahead of her is on that side)
             across = cell * (ahead if 45 < yaw % 360 < 135 else 1 - ahead if 225 < yaw % 360 < 315 else 0.5)
-            draw(tile, (across, floor), scale, tris, colours, yaw)
-            tpen.text((3, 1), f"{labels[k] if labels else k}  @{yaw}", fill=(60, 60, 60))
+            draw(tile, (across, floor if pitch < 45 else high // 2), scale, tris, colours, yaw, pitch)
+            tpen.text((3, 1), f"{labels[k] if labels else k}  @{yaw}" + (f"/{pitch:g}" if pitch != 12.0 else ""),
+                      fill=(60, 60, 60))
             image.paste(tile, (x0, y0))
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     image.save(path)

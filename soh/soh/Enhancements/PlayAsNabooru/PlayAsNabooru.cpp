@@ -161,7 +161,8 @@ const Move kComboSpin = { .name = "ComboSpin",
                           .end = 33,
                           .blendIn = 0.34f };
 // With the spear (see "the spear"): a jab in both hands, a lunge stepping in, the guards' sweep with their recovery to
-// attention; and the charge, which is not part of the combo.
+// attention; and the charge (B held), which is not part of the combo: frames 0-2 take her into the guards' run, 3-15
+// are one stride of it (16 is 3 again: looped while she charges), from 17 she pulls up into the thrust and her stance.
 const Move kSpearJab = {
     .name = "SpearJab", .anim = GEN(SpearJab), .mode = Mode::Attack, .start = 0, .end = 9, .blendIn = 0.5f
 };
@@ -172,17 +173,22 @@ const Move kSpearSweep = {
     .name = "SpearSweep", .anim = GEN(SpearSweep), .mode = Mode::Attack, .start = 0, .end = 18, .blendIn = 0.5f
 };
 const Move kSpearCharge = {
-    .name = "SpearCharge", .anim = GEN(SpearCharge), .mode = Mode::Attack, .start = 0, .end = 26, .blendIn = 0.5f
+    .name = "SpearCharge", .anim = GEN(SpearCharge), .mode = Mode::Attack, .start = 0, .end = 28, .blendIn = 0.5f
 };
 // from behind her block: the thrust of her jab
 const Move kSpearGuardJab = {
     .name = "SpearGuardJab", .anim = GEN(SpearJab), .mode = Mode::Sync, .start = 2, .end = 5, .blendIn = 0.5f
 };
 // Link's jump attack is her plunge: in the air with the spear raised point down (as long as Link is in the air),
-// driving it into the ground as she lands, rising into her stance.
+// driving it into the ground as she lands, rising into her stance. Leaping into it from the ground (Z-targeting, A)
+// she first crouches and pushes off (see KeepFeetDown); on flat ground Link lands at frame 7 of his 9.
 constexpr f32 kPlungeLift = 800.0f;
 const Move kPlungeAir = {
     .name = "PlungeAir", .anim = GEN(SpearPlunge), .mode = Mode::Sync, .start = 0, .end = 9, .lift = kPlungeLift
+};
+constexpr f32 kLeapGroundFrames = 1.0f; // Link's frames of the leap during which her feet stay on the ground
+const Move kLeapAir = {
+    .name = "LeapAir", .anim = GEN(SpearLeap), .mode = Mode::Sync, .start = 0, .end = 9, .span = 0.8f, .blendIn = 0.5f
 };
 const Move kPlungeHit = {
     .name = "PlungeHit", .anim = GEN(SpearPlunge), .mode = Mode::Once, .start = 10, .end = 14, .blendIn = 0.5f
@@ -1018,9 +1024,15 @@ bool IsAttack(const Move* move) {
     return move == &kHeavy || move == &kHeavyEnd;
 }
 
-// With the spear, what she does where she would use her scimitars so: Link's jump attack is her plunge, his stab
-// from behind his shield her jab, and she talks standing at attention (nullptr: as she stands).
+bool sLeapFromGround = false; // Link's jump attack under way began on the ground (Z-targeting, A)
+
+// With the spear, what she does where she would use her scimitars so: Link's jump attack is her plunge (leaping into
+// it from the ground), his stab from behind his shield her jab, and she talks standing at attention (nullptr: as she
+// stands).
 const Move* WithSpear(const Move* move) {
+    if (move == &kJumpSlashAir && sLeapFromGround && HasResource(kLeapAir.anim)) {
+        return &kLeapAir;
+    }
     return (move == &kJumpSlashAir)   ? &kPlungeAir
            : (move == &kJumpSlashHit) ? &kPlungeHit
            : (move == &kJumpSlashEnd) ? &kPlungeEnd
@@ -1180,10 +1192,11 @@ bool IsLinkTouchdown(const void* anim) {
     return name != nullptr && (strcmp(name, "normal_landing") == 0 || strcmp(name, "normal_landing_free") == 0);
 }
 
-// Link's side hop leaves the ground on its first frame. While her hop still crouches and pushes off, her model is
-// lowered by as much as he has risen, so her feet stay where she took off.
+// Link's side hop leaves the ground on its first frame, and so does his jump attack. While her hop (or leap) still
+// crouches and pushes off, her model is lowered by as much as he has risen, so her feet stay where she took off.
 void KeepFeetDown(Player* player) {
-    if (sBody.move != &kSideHopR && sBody.move != &kSideHopL) {
+    bool leap = sBody.move == &kLeapAir;
+    if (sBody.move != &kSideHopR && sBody.move != &kSideHopL && !leap) {
         sHop = nullptr;
         return;
     }
@@ -1192,7 +1205,8 @@ void KeepFeetDown(Player* player) {
         sHopFloorY = player->actor.world.pos.y; // (he only moves on the next frame)
     }
     const char* name = LinkAnimName(player->skelAnime.animation); // (not while she holds the hop as he falls on)
-    if (name != nullptr && strstr(name, "side_jump") != nullptr && player->skelAnime.curFrame <= kSideHopGroundFrames &&
+    if (name != nullptr && strstr(name, leap ? "jump_kiru" : "side_jump") != nullptr &&
+        player->skelAnime.curFrame <= (leap ? kLeapGroundFrames : kSideHopGroundFrames) &&
         player->actor.scale.y > 0.0f) {
         f32 risen = (player->actor.world.pos.y - sHopFloorY) / player->actor.scale.y; // model units
         sFinalJoints[0].y -= (s16)CLAMP(risen, 0.0f, 2000.0f);
@@ -1216,16 +1230,18 @@ void KeepFeetDown(Player* player) {
 //   3. the guards' sweep (which the game never plays): the spear swept level across her front, from which she
 //      draws herself up to attention as they do: the finisher
 //
-// and, Z-targeting, A is a charge where Link would leap into a jump attack: she runs in with the spear couched, as
-// the guards run, and thrusts it home; it hits as hard as his jump attack. (His jump attack itself, which he still
-// makes when B is pressed in the air, is her plunge: see WithSpear.)
+// and, with B still held as a jab or lunge is through, her charge: she runs on with the spear couched, as the guards
+// run, as long as B is held (up to kChargeMaxFrames), steering as the stick says, and thrusts it home as she pulls
+// up; it hits as hard as Link's jump attack. Holding B does not charge a spin attack with the spear (spinning the
+// stick still makes one). Link's jump attack is her plunge (see WithSpear).
 //
 // Pressing B again during an attack goes on to the next one as soon as the blade is through; pressing it while she
 // recovers, or shortly after, does too. Otherwise the combo starts over. The finisher ends the combo: B does nothing
-// until its swing is over, however much it is mashed. Link's swing action still hosts each attack
-// (so walls, shields, hit pauses, the lunge of a forward stab, holding B to charge a spin all work as his do), but
-// his animation no longer times it or moves her: hers does, through the VB_PLAYER_*_MELEE_* hooks. She stands her
-// ground as the Gerudo do; their animations shift her weight themselves.
+// until its swing is over, however much it is mashed. As each attack begins she turns, quickly, to the enemy she has
+// targeted, or else the way the stick is held, until the blade is on its way. Link's swing action still hosts each
+// attack (so walls, shields, hit pauses, the lunge of a forward stab, holding B to charge a spin with the scimitars
+// all work as his do), but his animation no longer times it or moves her: hers does, through the VB_PLAYER_*_MELEE_*
+// hooks. She stands her ground as the Gerudo do; their animations shift her weight themselves.
 struct Attack {
     const Move* move; // Mode::Attack: from its start to the end of her recovery
     f32 swingEnd;     // the frame her swing is over: on with the combo if B was pressed, else she recovers (and can
@@ -1249,15 +1265,32 @@ const Attack kScimitarCombo[] = {
     { &kComboSweep, 6.0f, 0.0f, 1.0f, 4.0f, true, false },
     { &kComboSpin, 25.0f, 13.0f, 13.0f, 23.0f, true, true, 13.0f, 20.0f, 3.4f },
 };
-// The lunge carries her 24 units; the charge 13 strides of the guards' run, some 140 units.
+// (A speed set on one frame moves her on the next, 1.5 units per unit of it.) The lunge carries her 16 units over its
+// frames 3-6, as LUNGE_LEAP in the asset builder has it: her feet are placed for it.
 const Attack kSpearCombo[] = {
     { &kSpearJab, 6.0f, 2.0f, 3.0f, 5.0f, false, false },
-    { &kSpearLunge, 9.0f, 3.0f, 4.0f, 8.0f, false, false, 3.0f, 6.0f, 4.0f },
+    { &kSpearLunge, 9.0f, 3.0f, 4.0f, 8.0f, false, false, 2.0f, 5.0f, 8.0f / 3.0f },
     { &kSpearSweep, 8.0f, 1.0f, 2.0f, 7.0f, false, true },
 };
-const Attack kSpearChargeAttack = { &kSpearCharge, 21.0f, 3.0f, 4.0f, 20.0f, false, true, 3.0f, 15.0f, 7.0f, true };
+// The charge: the guards' run (frames kChargeRunFrom up to kChargeRunTo, looped) covers 5.3 units a frame, her charge
+// 8.25: it plays that much faster. She runs at least kChargeMinFrames, at most kChargeMaxFrames (3 seconds), and stops
+// at a wall or a ledge.
+constexpr f32 kChargeRunFrom = 3.0f;
+constexpr f32 kChargeRunTo = 16.0f; // (the same pose as kChargeRunFrom)
+constexpr f32 kChargeThrust = 17.0f;
+constexpr f32 kChargeSpeed = 5.5f;
+constexpr f32 kChargeRunRate = 1.55f;
+constexpr s32 kChargeMinFrames = 6;
+constexpr s32 kChargeMaxFrames = 60;
+constexpr s16 kChargeTurnStep = 0x500; // how fast she steers, a frame
+constexpr f32 kChargeLeapFrom = kChargeRunFrom - 1.0f; // (she moves the frame after)
+constexpr f32 kChargeLeapTo = kChargeRunTo - 0.01f;
+const Attack kSpearChargeAttack = {
+    &kSpearCharge, 23.0f, 3.0f, 4.0f, 22.0f, false, true, kChargeLeapFrom, kChargeLeapTo, kChargeSpeed, true
+};
 constexpr u32 kHeavyDamage = 0x04000000; // (the Biggoron's Sword's jump attack)
 constexpr s32 kComboWindow = 12; // frames after a swing during which B goes on with the combo
+constexpr s16 kAttackTurnStep = 0x3000; // how fast she turns as an attack begins, a frame
 
 struct Combo {
     const Attack* steps;
@@ -1268,6 +1301,9 @@ const Attack* sAttack = nullptr; // her attack under way: its swing, then its re
 bool sAttackEndsCombo = false;   // it is the last of its combo (or stands alone)
 const Attack* sComboOf = nullptr; // the combo sComboNext counts through
 bool sChargeAsked = false;       // the attack Link is about to set up is her charge
+bool sHeldB = false;             // B has been held since the attack began
+s32 sChargeFrames = 0;           // how long she has run, charging
+bool sAttackJumped = false;      // her attack skipped ahead this frame (from her charge's run to its thrust)
 bool sSwinging = false;          // the swing (Link's swing action runs)
 bool sAttackStarted = false;     // this frame
 bool sAttackTicked = false;      // its frame has been advanced this frame
@@ -1324,6 +1360,35 @@ bool IsFinisher() {
     return sAttack != nullptr && sAttackEndsCombo;
 }
 
+// Where she means to strike: at the enemy she has targeted, else the way the stick is held (camera-relative). Holding
+// Z without a target, or the stick at rest, she keeps facing as she does: returns false.
+bool AttackAim(Player* player, s16* yaw) {
+    if (IsTargeting(player)) {
+        if (player->focusActor == nullptr) {
+            return false;
+        }
+        *yaw = Actor_WorldYawTowardActor(&player->actor, player->focusActor);
+        return true;
+    }
+    f32 magnitude;
+    s16 angle;
+    func_80077D10(&magnitude, &angle, &gPlayState->state.input[0]);
+    if (magnitude < kMoveStick) {
+        return false;
+    }
+    *yaw = Camera_GetInputDirYaw(GET_ACTIVE_CAM(gPlayState)) + angle;
+    return true;
+}
+
+// She turns towards where she means to strike, by up to `step` (her facing and the way she moves).
+void TurnToAim(Player* player, s16 step) {
+    s16 yaw;
+    if (AttackAim(player, &yaw)) {
+        Math_ScaledStepToS(&player->actor.shape.rot.y, yaw, step);
+        player->yaw = player->actor.world.rot.y = player->actor.shape.rot.y;
+    }
+}
+
 // Link has set up an attack: if it's a slash, it becomes the next step of her combo (or her charge).
 void Attack_OnStart(Player* player) {
     EndAttack();
@@ -1351,8 +1416,31 @@ void Attack_OnStart(Player* player) {
     sSwinging = sAttackStarted = true;
     sChainBuffered = false;
     sComboTimer = 0;
+    sChargeFrames = 0;
+    sHeldB = CHECK_BTN_ALL(gPlayState->state.input[0].cur.button, BTN_B);
     player->skelAnime.movementFlags = 0; // Link's animation doesn't move her
     player->unk_845 = 0;                 // nor does his own combo count (it would play his finishers)
+    TurnToAim(player, kAttackTurnStep);
+}
+
+// A frame of her charge: on through the guards' run while she charges (it loops), then the thrust.
+void AdvanceCharge(Player* player) {
+    if (sAttackFrame < kChargeRunFrom || sAttackFrame >= kChargeRunTo) {
+        sAttackFrame += 1.0f;
+        return;
+    }
+    sChargeFrames++;
+    bool blocked = (player->actor.bgCheckFlags & BGCHECKFLAG_WALL) ||
+                   !(player->actor.bgCheckFlags & BGCHECKFLAG_GROUND); // (a wall, or off a ledge)
+    if (sChargeFrames < kChargeMaxFrames && !blocked && (sHeldB || sChargeFrames < kChargeMinFrames)) {
+        sAttackFrame += kChargeRunRate;
+        if (sAttackFrame >= kChargeRunTo) {
+            sAttackFrame -= kChargeRunTo - kChargeRunFrom;
+        }
+    } else {
+        sAttackFrame = kChargeThrust; // (wherever she is in her stride: blended)
+        sAttackJumped = true;
+    }
 }
 
 // A frame of the swing: her attack moves on a frame, her blades go active and idle with it. Returns whether the
@@ -1369,7 +1457,12 @@ bool Attack_SetWeaponState(Player* player) {
         }
         return false;
     }
-    sAttackFrame += 1.0f;
+    sHeldB &= CHECK_BTN_ALL(gPlayState->state.input[0].cur.button, BTN_B);
+    if (sAttack == &kSpearChargeAttack) {
+        AdvanceCharge(player);
+    } else {
+        sAttackFrame += 1.0f;
+    }
     sAttackTicked = true;
     if (CHECK_BTN_ALL(gPlayState->state.input[0].press.button, BTN_B) && !IsFinisher()) {
         sChainBuffered = true;
@@ -1396,6 +1489,14 @@ bool Attack_SwingFinished(Player* player, PlayState* play, bool linkDone) {
     if (sAttack == nullptr || !sSwinging) {
         return linkDone;
     }
+    // She turns as the attack begins, until the blade is on its way (or she moves off), and steers her charge.
+    bool running = sAttack == &kSpearChargeAttack && sAttackFrame >= kChargeRunFrom && sAttackFrame < kChargeRunTo;
+    f32 turnUntil = (sAttack->leapFrom >= 0.0f) ? MIN(sAttack->hitFrom, sAttack->leapFrom) : sAttack->hitFrom;
+    if (running) {
+        TurnToAim(player, kChargeTurnStep);
+    } else if (sAttackFrame < turnUntil) {
+        TurnToAim(player, kAttackTurnStep);
+    }
     if (sAttackFrame >= sAttack->leapFrom && sAttackFrame <= sAttack->leapTo) {
         player->linearVelocity = sAttack->leapSpeed;
     }
@@ -1417,17 +1518,15 @@ bool Attack_SwingFinished(Player* player, PlayState* play, bool linkDone) {
         }
         return false;
     }
-    return true;
-}
-
-// Z-targeting, A with the spear in hand: her charge, where Link would leap into a jump attack. Returns whether it is.
-bool Attack_StartCharge(Player* player, PlayState* play) {
-    if (!HoldsSpear(player)) {
-        return false;
+    if (HoldsSpear(player)) {
+        if (sHeldB && !IsFinisher()) { // B held all through a jab or a lunge: her charge
+            sChargeAsked = true;
+            func_80837948(play, player, PLAYER_MWA_STAB_2H); // (any slash: it only hosts hers)
+            sChargeAsked = false;
+            return false;
+        }
+        player->unk_844 = 0; // (holding B charges no spin attack)
     }
-    sChargeAsked = true;
-    func_80837948(play, player, PLAYER_MWA_STAB_2H); // (any slash: it only hosts hers)
-    sChargeAsked = false;
     return true;
 }
 
@@ -1435,6 +1534,9 @@ bool Attack_StartCharge(Player* player, PlayState* play) {
 void UpdateAttack(Player* player, bool grounded, bool moving, bool shielding) {
     if (sComboTimer > 0 && !sSwinging) {
         sComboTimer--;
+    }
+    if (!sSwinging && player->unk_844 > 0 && HoldsSpear(player)) {
+        player->unk_844 = 0; // with the spear, holding B after any attack charges no spin attack
     }
     if (sAttack != nullptr && sSwinging) {
         if (player->actionFunc != Player_Action_808502D0) {
@@ -1531,6 +1633,7 @@ void Nabooru_OnPlayerUpdate() {
     if (body != nullptr && body->next == nullptr && body->linkTo >= 0.0f && link->curFrame > body->linkTo) {
         body = nullptr; // done before Link: on to her idle (e.g. folding her arms) rather than holding still
     }
+    sLeapFromGround &= body == &kJumpSlashAir; // (until Link lands)
     if (sSpear) {
         body = WithSpear(body);
     }
@@ -1548,7 +1651,7 @@ void Nabooru_OnPlayerUpdate() {
         body = nullptr;
     }
     if (body == &kAirborne && (sBody.move == &kBackflip || sBody.move == &kJumpSlashAir || sBody.move == &kPlungeAir ||
-                               sBody.move == &kSideHopR || sBody.move == &kSideHopL)) {
+                               sBody.move == &kLeapAir || sBody.move == &kSideHopR || sBody.move == &kSideHopL)) {
         // Link briefly plays his fall between a flip and its landing (or a side hop and its landing, when the ground
         // falls away): finish the flip, hold the hop's last frame in the air instead
         body = sBody.move;
@@ -1677,8 +1780,8 @@ void Nabooru_OnPlayerUpdate() {
     bool continues = hadMove && body != sBody.move && body->mode != Mode::Loop && AnimFor(body) == sBody.anim &&
                      fabsf(body->start - sBody.skel.curFrame) <= 1.0f;
     bool changed = SetMove(sBody, body) && hadMove && !continues;
-    changed |= sAttackStarted && hadMove; // (the same attack again starts over)
-    sAttackStarted = false;
+    changed |= (sAttackStarted || sAttackJumped) && hadMove; // (the same attack again starts over)
+    sAttackStarted = sAttackJumped = false;
     if (freezeBody) {
         SkelAnime_Update(&sBody.skel);
     } else {
@@ -1968,11 +2071,11 @@ void RegisterPlayAsNabooru() {
             *should = Attack_SwingFinished(player, play, *should);
         }
     });
+    // Z-targeting, A: with the spear she leaps into her plunge from a crouch (see WithSpear).
     COND_VB_SHOULD(VB_PLAYER_START_JUMP_SLASH, enabled, {
         Player* player = va_arg(args, Player*);
-        PlayState* play = va_arg(args, PlayState*);
-        if (IsHer(player) && Attack_StartCharge(player, play)) {
-            *should = false;
+        if (IsHer(player)) {
+            sLeapFromGround = true;
         }
     });
     // She blocks with the spear's shaft, in both hands, where Link cannot raise his shield beside a two-handed sword.
