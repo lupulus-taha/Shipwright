@@ -544,7 +544,10 @@ s32 Player_ActionToModelGroup(Player* this, s32 itemAction) {
 void Player_SetModelsForHoldingShield(Player* this) {
     if ((this->stateFlags1 & PLAYER_STATE1_SHIELDING) &&
         ((this->itemAction < 0) || (this->itemAction == this->heldItemAction))) {
-        if ((CVarGetInteger(CVAR_CHEAT("ShieldTwoHanded"), 0) && (this->heldItemAction != PLAYER_IA_DEKU_STICK) ||
+        if ((GameInteractor_Should(VB_PLAYER_SHIELD_TWO_HANDED,
+                                   CVarGetInteger(CVAR_CHEAT("ShieldTwoHanded"), 0) &&
+                                       (this->heldItemAction != PLAYER_IA_DEKU_STICK),
+                                   this) ||
              !Player_HoldsTwoHandedWeapon(this)) &&
             !Player_IsChildWithHylianShield(this)) {
             this->rightHandType = PLAYER_MODELTYPE_RH_SHIELD;

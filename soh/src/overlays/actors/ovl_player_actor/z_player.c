@@ -6359,7 +6359,10 @@ s32 Player_ActionHandler_10(Player* this, PlayState* play) {
                     }
                 } else {
                     if ((Player_GetMeleeWeaponHeld(this) != 0) && Player_CanUpdateItems(this)) {
-                        func_8083BA90(play, this, PLAYER_MWA_JUMPSLASH_START, 5.0f, 5.0f);
+                        // SoH: lets an enhancement that gives the player other attacks put one in its place
+                        if (GameInteractor_Should(VB_PLAYER_START_JUMP_SLASH, true, this, play)) {
+                            func_8083BA90(play, this, PLAYER_MWA_JUMPSLASH_START, 5.0f, 5.0f);
+                        }
                     } else {
                         Player_SetupRoll(this, play);
                     }

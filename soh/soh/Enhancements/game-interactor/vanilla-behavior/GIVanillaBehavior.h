@@ -2688,6 +2688,27 @@ typedef enum {
     // - `*PlayState`
     VB_PLAYER_UPDATE_MELEE_WEAPON_INFO,
 
+    // Z-targeting with a melee weapon in hand, A was pressed (the stick neutral or forward): whether Link leaps into
+    // a jump attack. Return false after starting something else in its place.
+    // #### `result`
+    // ```c
+    // true
+    // ```
+    // #### `args`
+    // - `*Player`
+    // - `*PlayState`
+    VB_PLAYER_START_JUMP_SLASH,
+
+    // Link shields (Player_SetModelsForHoldingShield) with a two-handed weapon in hand: whether he raises his shield
+    // all the same.
+    // #### `result`
+    // ```c
+    // CVarGetInteger(CVAR_CHEAT("ShieldTwoHanded"), 0) && (this->heldItemAction != PLAYER_IA_DEKU_STICK)
+    // ```
+    // #### `args`
+    // - `*Player`
+    VB_PLAYER_SHIELD_TWO_HANDED,
+
     // #### `result`
     // ```c
     // false
