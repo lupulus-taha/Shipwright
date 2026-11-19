@@ -1226,8 +1226,9 @@ void KeepFeetDown(Player* player) {
 // With the spear (Link's Biggoron's Sword) they are others, built on its reach:
 //
 //   1. a jab: a short thrust in both hands, her weight going onto her front leg and back
-//   2. a lunge: she steps through, right foot past her left, and thrusts at full reach with her right arm alone, side
-//      on, her shoulders and her left arm thrown back in line with the spear; then steps back
+//   2. a lunge: a passing step far out onto her right foot, sinking low as her chest twists round and her right arm
+//      drives the spear out alone, her left arm flung out behind her; then she steps back where she began (the
+//      player is carried along with her)
 //   3. the guards' sweep (which the game never plays): the spear swept level across her front, from which she
 //      draws herself up to attention as they do: the finisher
 //
@@ -1242,7 +1243,8 @@ void KeepFeetDown(Player* player) {
 // targeted, or else the way the stick is held, until the blade is on its way. Link's swing action still hosts each
 // attack (so walls, shields, hit pauses, the lunge of a forward stab, holding B to charge a spin with the scimitars
 // all work as his do), but his animation no longer times it or moves her: hers does, through the VB_PLAYER_*_MELEE_*
-// hooks. She stands her ground as the Gerudo do; their animations shift her weight themselves.
+// hooks. She stands her ground as the Gerudo do; their animations shift her weight themselves (her lunge, whose steps
+// go far, carries the player along: see Attack::travel).
 struct Attack {
     const Move* move; // Mode::Attack: from its start to the end of her recovery
     f32 swingEnd;     // the frame her swing is over: on with the combo if B was pressed, else she recovers (and can
@@ -1256,7 +1258,9 @@ struct Attack {
     f32 leapFrom = -1.0f; // frames during which she moves forward at `leapSpeed`
     f32 leapTo = -1.0f;
     f32 leapSpeed = 0.0f;
-    bool heavy = false; // hits as a jump attack does
+    bool heavy = false;          // hits as a jump attack does
+    const f32* travel = nullptr; // else how far forward the player has been carried by each frame from its start
+    s32 travelFrames = 0;        // (units; none after the last): she is drawn from there (see CarryAlong)
 };
 
 // The fighter's spin carries her 120 units (8 frames at speed 10, which is 15 units a frame); Link's finishers carry
@@ -1266,11 +1270,15 @@ const Attack kScimitarCombo[] = {
     { &kComboSweep, 6.0f, 0.0f, 1.0f, 4.0f, true, false },
     { &kComboSpin, 25.0f, 13.0f, 13.0f, 23.0f, true, true, 13.0f, 20.0f, 3.4f },
 };
-// The lunge steps through and back where she stands (the game doesn't move her): its swing is over once her right foot
-// is down behind her again. (A speed set on one frame moves her on the next, 1.5 units per unit of it.)
+// The lunge carries the player along with her hips, 44 units out as she steps in and back as she steps back
+// (kLungeTravel: the asset builder's LUNGE_TRAVEL, which she is drawn from, so her back foot stays where it stands);
+// its swing is over once her right foot is down behind her again. (A speed set on one frame moves her on the next,
+// 1.5 units per unit of it.)
+constexpr f32 kLungeTravel[] = { 0.0f, 2.5f, 10.6f, 22.1f, 33.6f, 41.5f, 43.7f, 43.4f, 43.0f, 34.6f, 20.6f, 8.1f };
 const Attack kSpearCombo[] = {
     { &kSpearJab, 6.0f, 2.0f, 3.0f, 5.0f, false, false },
-    { &kSpearLunge, 11.0f, 3.0f, 4.0f, 8.0f, false, false },
+    { &kSpearLunge, 12.0f, 3.0f, 4.0f, 8.0f, false, false, -1.0f, -1.0f, 0.0f, false, kLungeTravel,
+      ARRAY_COUNT(kLungeTravel) },
     { &kSpearSweep, 8.0f, 1.0f, 2.0f, 7.0f, false, true },
 };
 // The charge: the guards' run (frames kChargeRunFrom up to kChargeRunTo, looped) covers 5.3 units a frame, her charge
@@ -1292,6 +1300,9 @@ const Attack kSpearChargeAttack = {
 constexpr u32 kHeavyDamage = 0x04000000; // (the Biggoron's Sword's jump attack)
 constexpr s32 kComboWindow = 12; // frames after a swing during which B goes on with the combo
 constexpr s16 kAttackTurnStep = 0x3000; // how fast she turns as an attack begins, a frame
+constexpr f32 kCarryTurnUntil = 2.0f;   // an attack that carries her turns only before it has: her feet stay put
+constexpr f32 kSpeedScale = 1.5f;       // units a frame a player moves per unit of speed
+constexpr f32 kMaxCarrySpeed = 12.0f;
 
 struct Combo {
     const Attack* steps;
@@ -1309,6 +1320,7 @@ bool sSwinging = false;          // the swing (Link's swing action runs)
 bool sAttackStarted = false;     // this frame
 bool sAttackTicked = false;      // its frame has been advanced this frame
 bool sChainBuffered = false;     // B was pressed during the swing
+Vec3f sAttackFrom = {};          // where the player stood as it began
 s32 sComboNext = 0;              // the next step, if B comes in time
 s32 sComboTimer = 0;
 WeaponInfo sLeftTrailInfo = {}; // her left scimitar's trail (her right one's is Link's sword's)
@@ -1390,6 +1402,18 @@ void TurnToAim(Player* player, s16 step) {
     }
 }
 
+// An attack with a travel carries the player along: the speed that takes them, on the next frame, to where it has them
+// by then, from how far they have come (so where a wall holds them back, it holds her back too, and they come back
+// no further than they went).
+void CarryAlong(Player* player) {
+    s32 next = (s32)(sAttackFrame - sAttack->move->start) + 1;
+    f32 want = (next >= 0 && next < sAttack->travelFrames) ? sAttack->travel[next] : 0.0f;
+    s16 yaw = player->actor.world.rot.y;
+    f32 come = (player->actor.world.pos.x - sAttackFrom.x) * Math_SinS(yaw) +
+               (player->actor.world.pos.z - sAttackFrom.z) * Math_CosS(yaw);
+    player->linearVelocity = CLAMP((want - come) / kSpeedScale, -kMaxCarrySpeed, kMaxCarrySpeed);
+}
+
 // Link has set up an attack: if it's a slash, it becomes the next step of her combo (or her charge).
 void Attack_OnStart(Player* player) {
     EndAttack();
@@ -1421,7 +1445,11 @@ void Attack_OnStart(Player* player) {
     sHeldB = CHECK_BTN_ALL(gPlayState->state.input[0].cur.button, BTN_B);
     player->skelAnime.movementFlags = 0; // Link's animation doesn't move her
     player->unk_845 = 0;                 // nor does his own combo count (it would play his finishers)
+    sAttackFrom = player->actor.world.pos;
     TurnToAim(player, kAttackTurnStep);
+    if (sAttack->travel != nullptr) {
+        CarryAlong(player); // (from its first frame: its swing only runs from the next)
+    }
 }
 
 // A frame of her charge: on through the guards' run while she charges (it loops), then the thrust.
@@ -1503,6 +1531,9 @@ bool Attack_SwingFinished(Player* player, PlayState* play, bool linkDone) {
     // She turns as the attack begins, until the blade is on its way (or she moves off), and steers her charge.
     bool running = sAttack == &kSpearChargeAttack && sAttackFrame >= kChargeRunFrom && sAttackFrame < kChargeRunTo;
     f32 turnUntil = (sAttack->leapFrom >= 0.0f) ? MIN(sAttack->hitFrom, sAttack->leapFrom) : sAttack->hitFrom;
+    if (sAttack->travel != nullptr) {
+        turnUntil = MIN(turnUntil, sAttack->move->start + kCarryTurnUntil);
+    }
     if (running) {
         TurnToAim(player, kChargeTurnStep);
     } else if (sAttackFrame < turnUntil) {
@@ -1510,6 +1541,9 @@ bool Attack_SwingFinished(Player* player, PlayState* play, bool linkDone) {
     }
     if (sAttackFrame >= sAttack->leapFrom && sAttackFrame <= sAttack->leapTo) {
         player->linearVelocity = sAttack->leapSpeed;
+    }
+    if (sAttack->travel != nullptr) {
+        CarryAlong(player);
     }
     if (sAttackFrame < sAttack->swingEnd) {
         return false;

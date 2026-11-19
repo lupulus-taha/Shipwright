@@ -1662,60 +1662,92 @@ def make_jab(slash, stance, nb_limbs):
     return settle_into(spear_moves(bodies, keys, nb_limbs, "SpearJab"), stance, 3, begin=2)
 
 
-# The lunge: a long thrust in her right hand alone. Out of her stance (left foot ahead) she draws the spear back, her
-# weight onto her left foot, then steps through: her right foot passes her left and lands far ahead, knee bent over
-# it, her left leg stretched out behind (its foot turning out and sliding back a little); her hips turn side on and
-# her shoulders further, until they line up with the spear: her right arm drives it out at full reach, her left hand
-# lets go and her left arm is thrown back behind her along the same line. Then she pushes back off her right foot,
-# steps it back behind her left and takes the shaft in both hands again: her stance, where she began (the game does
-# not move her). Keys: her hips (model units), their yaw and her chest's (degrees, towards her left; her stance has
-# LUNGE_STANCE_YAWS), her upper body's bend forward and her pelvis's share of it, and each foot: where it stands (x,
-# z), how high its lowest point is off the ground, its yaw from her stance's, its toes pitched down.
+# The lunge: a long thrust in her right hand alone, a passing lunge. Out of her stance (left foot ahead) she draws the
+# spear back, her weight going onto her left foot, and falls forward into a step: up on her left leg, her right foot
+# passes it and reaches far out ahead, heel first, her upper body leaning into the step and her chest still turned
+# away. As her heel strikes she twists: her chest comes round past side on while her right arm drives the spear out
+# through her left hand to full reach, a little upwards, her eyes along it; she sinks into a deep lunge, her weight
+# over her bent front leg, her back leg straight, its foot turning out on its ball (the ball stays where it stood).
+# Her left hand lets go as her heel strikes, and the turn of her chest drags that arm back, the elbow leading and the
+# forearm trailing, then unfolding: it is stretched out behind her, a little in front of the line of her shoulders, on
+# the frame her right arm is at its furthest. She holds it, pushes back off her right foot, steps it back behind her
+# left and takes the shaft in both hands again: her stance, where she began. The game carries the player along with
+# her (LUNGE_TRAVEL), and she is drawn from where it has carried them, so her left foot stays where it stands.
+# Keys: her hips (model units, from where the player stood as she began), their yaw and her chest's (degrees, towards
+# her left; her stance has LUNGE_STANCE_YAWS), her upper body's bend forward and her pelvis's share of it, how much her
+# head keeps its orientation in her stance, its tilt (negative: back), how far it turns to look along the spear, and
+# each foot: where its ankle is (x, z), how high its lowest point is off the ground, its yaw from her stance's, its
+# toes pitched down. Her left foot keeps the ball of its foot where it stands in her stance: its x, z are 0.
 LUNGE_FRAMES = 17
 LUNGE_STANCE_YAWS = (-7.0, -43.0)
+LUNGE_BALL = 560.0  # how far ahead of her ankle the ball of her foot is (along the foot, model units)
+LUNGE_DEEP, LUNGE_FRONT = 3560.0, 4700.0  # her hips at full reach (z); where her right foot lands (z)
 LUNGE_BODY = [
-    dict(at=0, hips=(-309, 2368, -809), hy=-7, chest=-43, lean=0, pitch=0,
-         lf=(453, 206, 0, 0, 0), rf=(-765, -1515, 0, 0, 0)),
-    dict(at=2, hips=(-320, 2300, -650), hy=-12, chest=-58, lean=3, pitch=0,  # drawn back, her weight going forward
-         lf=(453, 206, 0, 0, 0), rf=(-765, -1515, 120, 0, 35), ease="out"),
-    dict(at=3, hips=(-250, 2200, 300), hy=10, chest=-5, lean=6, pitch=3,  # her right foot passing her left
-         lf=(453, 206, 0, 20, 15), rf=(-250, 400, 420, 20, 10), ease="in"),
-    dict(at=4, hips=(-150, 2120, 1400), hy=40, chest=60, lean=11, pitch=6,  # reaching out
-         lf=(445, 50, 0, 45, 10), rf=(40, 2300, 220, 35, -20), ease="linear"),
-    dict(at=5, hips=(-100, 2080, 2000), hy=55, chest=92, lean=13, pitch=7,  # landed: at full reach
-         lf=(440, -150, 0, 62, 0), rf=(80, 3000, 0, 38, 0), ease="out"),
-    dict(at=6, hips=(-100, 2060, 2030), hy=56, chest=96, lean=14, pitch=7,
-         lf=(440, -150, 0, 62, 0), rf=(80, 3000, 0, 38, 0)),
-    dict(at=8, hips=(-100, 2075, 2010), hy=55, chest=94, lean=13, pitch=7,
-         lf=(440, -150, 0, 62, 0), rf=(80, 3000, 0, 38, 0)),
-    dict(at=9, hips=(-150, 2150, 1500), hy=40, chest=60, lean=9, pitch=5,  # pushing back
-         lf=(440, -100, 0, 50, 0), rf=(80, 3000, 80, 38, 25), ease="in"),
-    dict(at=10, hips=(-250, 2250, 200), hy=10, chest=0, lean=5, pitch=3,
-         lf=(450, 150, 0, 20, 10), rf=(-300, 600, 380, 20, 15), ease="linear"),
-    dict(at=11, hips=(-300, 2320, -650), hy=-8, chest=-40, lean=1, pitch=0,  # set down behind her again
-         lf=(453, 206, 0, 2, 0), rf=(-765, -1515, 0, 0, 0), ease="out"),
-    dict(at=13, hips=(-309, 2368, -809), hy=-7, chest=-43, lean=0, pitch=0,
-         lf=(453, 206, 0, 0, 0), rf=(-765, -1515, 0, 0, 0)),
+    dict(at=0, hips=(-309, 2368, -809), hy=-7, chest=-43, lean=0, pitch=0, head=0.85, nod=0, gaze=0,
+         lf=(0, 0, 0, 0, 0), rf=(-765, -1515, 0, 0, 0)),
+    dict(at=1, hips=(-330, 2330, -560), hy=-12, chest=-60, lean=7, pitch=2, head=0.85, nod=0, gaze=0,  # drawn back
+         lf=(0, 0, 0, 0, 0), rf=(-765, -1515, 160, 0, 30), ease="out"),
+    dict(at=2, hips=(-300, 2450, 250), hy=-4, chest=-52, lean=15, pitch=5, head=0.85, nod=0, gaze=0,  # passing
+         lf=(0, 0, 0, 5, 10), rf=(-330, 150, 650, 10, 5), ease="in"),
+    dict(at=3, hips=(-230, 2330, 1400), hy=12, chest=-30, lean=20, pitch=7, head=0.85, nod=-6, gaze=0,  # reaching out
+         lf=(0, 0, 0, 22, 30), rf=(-260, 3650, 800, 32, -60), ease="linear"),
+    dict(at=4, hips=(-180, 1880, 2550), hy=38, chest=28, lean=22, pitch=7, head=0.85, nod=-10, gaze=0.4,  # heel strikes
+         lf=(0, 0, 0, 45, 22), rf=(-250, LUNGE_FRONT, 0, 35, -50), ease="linear"),
+    dict(at=5, hips=(-140, 1500, LUNGE_DEEP - 220), hy=55, chest=96, lean=31, pitch=10, head=0.85, nod=-10, gaze=0.8,
+         lf=(0, 0, 0, 62, 0), rf=(-250, LUNGE_FRONT, 0, 36, -31), ease="out"),  # landed
+    dict(at=6, hips=(-130, 1380, LUNGE_DEEP), hy=58, chest=108, lean=36, pitch=12, head=0.85, nod=-10, gaze=1.0,
+         lf=(0, 0, 0, 64, 0), rf=(-250, LUNGE_FRONT, 0, 36, -31), ease="out"),  # full reach: deepest
+    dict(at=7, hips=(-130, 1405, LUNGE_DEEP - 30), hy=58, chest=104, lean=35, pitch=12, head=0.85, nod=-10, gaze=1.0,
+         lf=(0, 0, 0, 64, 0), rf=(-250, LUNGE_FRONT, 0, 36, -31)),
+    dict(at=8, hips=(-130, 1440, LUNGE_DEEP - 70), hy=57, chest=100, lean=34, pitch=11, head=0.85, nod=-10, gaze=1.0,
+         lf=(0, 0, 0, 64, 0), rf=(-250, LUNGE_FRONT, 0, 36, -31)),
+    dict(at=9, hips=(-170, 1800, 2650), hy=40, chest=60, lean=18, pitch=6, head=0.85, nod=-12, gaze=0.5,
+         lf=(0, 0, 0, 45, 0), rf=(-250, LUNGE_FRONT, 60, 36, 0), ease="in"),  # pushing back off it
+    dict(at=10, hips=(-250, 2200, 1250), hy=12, chest=5, lean=7, pitch=3, head=0.85, nod=-5, gaze=0,
+         lf=(0, 0, 0, 15, 0), rf=(-420, 2200, 480, 20, 10), ease="linear"),
+    dict(at=11, hips=(-290, 2300, 0), hy=-2, chest=-25, lean=4, pitch=2, head=0.85, nod=0, gaze=0,
+         lf=(0, 0, 0, 5, 0), rf=(-650, -600, 280, 8, 10), ease="linear"),
+    dict(at=12, hips=(-305, 2340, -700), hy=-6, chest=-40, lean=1, pitch=0, head=0.85, nod=0, gaze=0,  # set down
+         lf=(0, 0, 0, 0, 0), rf=(-765, -1515, 0, 0, 0), ease="out"),
+    dict(at=14, hips=(-309, 2368, -809), hy=-7, chest=-43, lean=0, pitch=0, head=0.85, nod=0, gaze=0,
+         lf=(0, 0, 0, 0, 0), rf=(-765, -1515, 0, 0, 0)),
 ]
 # Her right hand: where it holds the spear from her right shoulder, the way the blade points (see spear_hold_from),
-# and where her left hand holds the shaft when it does.
-LUNGE = [dict(at=2, hand=(-1250, -1700, -750), aim=(12, 9), left=2900, ease="out"),  # drawn back
-         dict(at=4, hand=(-900, -900, 900), aim=(10, 4), left=2000, ease="in"),
-         dict(at=5, hand=(-550, -350, 1850), aim=(8, 0), left=2000, ease="out"),  # at full reach
-         dict(at=8, hand=(-550, -350, 1850), aim=(8, 0), left=2000),
-         dict(at=10, hand=(-1100, -1100, 600), aim=(13, 7), left=2900)]
-LUNGE_REST_AT = 13  # back as she holds it in her stance
-# Her left hand: `w` of the way on the shaft, the rest of the way where her left arm reaches (direction from her left
-# shoulder, distance): letting go down by her hip, thrown back along the spear's line, swinging forward again.
-LUNGE_LEFT_ARM = [dict(at=2, dir=(0.2, -0.9, 0.5), dist=1700, w=1.0),
-                  dict(at=3, dir=(0.5, -0.85, 0.1), dist=1750, w=0.4, ease="linear"),
-                  dict(at=4, dir=(0.25, -0.6, -0.75), dist=1820, w=0.0, ease="linear"),
-                  dict(at=5, dir=(-0.12, -0.22, -0.97), dist=1860, w=0.0, ease="out"),  # back along the line
-                  dict(at=8, dir=(-0.12, -0.2, -0.97), dist=1860, w=0.0),
-                  dict(at=9, dir=(0.25, -0.6, -0.75), dist=1820, w=0.0, ease="in"),
-                  dict(at=10, dir=(0.5, -0.85, 0.1), dist=1750, w=0.3, ease="linear"),
-                  dict(at=11, dir=(0.2, -0.9, 0.5), dist=1700, w=0.8, ease="linear"),
-                  dict(at=12, dir=(0.2, -0.9, 0.5), dist=1700, w=1.0, ease="out")]
+# and where her left hand holds the shaft while it does.
+LUNGE = [dict(at=1, hand=(-1250, -1700, -750), aim=(12, 9), left=2900, ease="out"),  # drawn back
+         dict(at=2, hand=(-1250, -1650, -500), aim=(12, 8), left=2900),
+         dict(at=3, hand=(-1100, -1350, 300), aim=(9, 5), left=1100, ease="in"),  # driven through her left
+         dict(at=4, hand=(-650, -700, 1250), aim=(7, 3), left=900, ease="linear"),
+         dict(at=5, hand=(-300, -150, 1850), aim=(8, 4), left=900, ease="out"),  # home
+         dict(at=6, hand=(-280, -80, 1870), aim=(9, 5), left=900, ease="out"),  # at its furthest
+         dict(at=8, hand=(-280, -40, 1860), aim=(8, 4), left=900),
+         dict(at=10, hand=(-1000, -1000, 800), aim=(12, 6), left=2700),
+         dict(at=11, hand=(-1150, -1250, 300), aim=(13, 8), left=2900)]
+LUNGE_REST_AT = 14  # back as she holds it in her stance
+
+
+def lunge_arm(side, out):
+    """A direction (model space) from its angle in a side view of her (degrees from straight ahead, + up) and how far
+    it leans out of that view's plane, towards her left (her front, at full reach)."""
+    a, s = math.radians(side), math.sqrt(1 - out * out)
+    return (out, math.sin(a) * s, math.cos(a) * s)
+
+
+# Her left arm: which way her upper arm points from her shoulder and her forearm from her elbow, and `w`, how much of
+# the way her hand is on the shaft.
+LUNGE_LEFT_ARM = [dict(at=3, up=lunge_arm(-55, 0.2), fore=lunge_arm(-28, 0.1), w=1.0),
+                  dict(at=4, up=lunge_arm(-100, 0.25), fore=lunge_arm(-15, 0.0), w=0.0, ease="linear"),  # elbow leads
+                  dict(at=5, up=lunge_arm(-150, 0.3), fore=lunge_arm(-92, 0.3), w=0.0, ease="linear"),  # unfolding
+                  dict(at=6, up=lunge_arm(-170, 0.13), fore=lunge_arm(-177, 0.12), w=0.0, ease="out"),  # stretched
+                  dict(at=7, up=lunge_arm(-171, 0.12), fore=lunge_arm(-179, 0.1), w=0.0),
+                  dict(at=8, up=lunge_arm(-172, 0.12), fore=lunge_arm(-180, 0.1), w=0.0),
+                  dict(at=9, up=lunge_arm(-142, 0.2), fore=lunge_arm(-118, 0.2), w=0.0, ease="in"),
+                  dict(at=10, up=(0.25, -0.96, 0.1), fore=(0.3, -0.6, 0.75), w=0.2, ease="linear"),
+                  dict(at=11, up=(0.2, -0.9, 0.4), fore=(0.1, -0.4, 0.9), w=0.6, ease="linear"),
+                  dict(at=12, up=(0.2, -0.9, 0.4), fore=(0.1, -0.4, 0.9), w=1.0, ease="out")]
+# How far the game has carried the player forward by each frame (game units; none after): with her hips as she steps
+# in, and back. PlayAsNabooru.cpp has the same (kLungeTravel).
+LUNGE_TRAVEL = (0.0, 2.5, 10.6, 22.1, 33.6, 41.5, 43.7, 43.4, 43.0, 34.6, 20.6, 8.1)
 SETTLE_FRAMES = 4  # an attack's last frames, blended into her stance exactly
 
 
@@ -1729,12 +1761,30 @@ def lunge_body(stance, nb_limbs, feet, i):
     rotate_world(f, nb_limbs, 0, X_AXIS, float(k["pitch"]))
     rotate_world(f, nb_limbs, NB_TORSO, Y_AXIS, (float(k["chest"]) - chest_yaw) - (float(k["hy"]) - hips_yaw))
     bend_forward(f, nb_limbs, NB_TORSO, float(k["lean"]) - float(k["pitch"]))
-    steady_limb(f, nb_limbs, NB_HEAD, W0[NB_HEAD], 0.85)  # looking ahead
+    steady_limb(f, nb_limbs, NB_HEAD, W0[NB_HEAD], float(k["head"]))
+    if float(k["nod"]):
+        bend_forward(f, nb_limbs, NB_HEAD, float(k["nod"]))
+    if float(k["gaze"]) > 0:  # her face (her head's +Y) turned towards where the blade points
+        W, _ = fk(nb_limbs, f)
+        yaw, pitch = (math.radians(float(v)) for v in tween(LUNGE, i)["aim"])
+        want = np.array([math.sin(yaw) * math.cos(pitch), math.sin(pitch), math.cos(yaw) * math.cos(pitch)])
+        face = W[NB_HEAD] @ np.array([0.0, 1.0, 0.0])
+        axis = np.cross(face, want)
+        if np.linalg.norm(axis) > 1e-9:
+            rotate_world(f, nb_limbs, NB_HEAD, axis,
+                         float(k["gaze"]) * math.degrees(math.acos(np.clip(face @ want, -1, 1))))
     for leg, key in ((NB_L_LEG, k["lf"]), (NB_R_LEG, k["rf"])):
         x, z, lift, yaw, toes = (float(v) for v in key)
         foot = leg[2]
-        f = place_foot(f, nb_limbs, feet, leg, np.array([x, P0[foot][1], z]), feet.lowest(stance, foot) + lift, toes,
-                       flat=turn_matrix(Y_AXIS, yaw) @ W0[foot])
+        flat = turn_matrix(Y_AXIS, yaw) @ W0[foot]
+        if leg == NB_L_LEG:  # turning on the ball of her foot, which stays where it is in her stance
+            ahead = W0[foot] @ np.array([LUNGE_BALL, 0.0, 0.0])
+            turned = flat @ np.array([LUNGE_BALL * math.cos(math.radians(toes)), 0.0, 0.0])
+            ankle = P0[foot] + np.array([ahead[0] - turned[0] + x, 0.0, ahead[2] - turned[2] + z])
+        else:
+            ankle = np.array([x, P0[foot][1], z])
+        ankle[1] = P0[foot][1]
+        f = place_foot(f, nb_limbs, feet, leg, ankle, feet.lowest(stance, foot) + lift, toes, flat=flat)
     return f
 
 
@@ -1762,10 +1812,12 @@ def settle_into(frames, rest, n=SETTLE_FRAMES, begin=0):
 
 
 def free_left_arm(held, bodies, nb_limbs, keys, hand_rest):
-    """`held` (her left hand on the shaft) with that hand `w` of the way on it, as `keys` say (see LUNGE_LEFT_ARM): her
-    wrist goes straight between where the keys put it and the shaft (so the keys can lead it round her body), her
-    left arm reaching from where `bodies` has it, its forearm turning about itself towards how it holds the shaft
-    only as her hand closes on it. Off the shaft her hand continues her forearm as `hand_rest` (a frame) has it."""
+    """`held` (her left hand on the shaft) with that hand `w` of the way on it, as `keys` say (see LUNGE_LEFT_ARM):
+    off it, her upper arm points `up` from her shoulder and her forearm `fore` from her elbow, her wrist going straight
+    between there and the shaft; her arm reaches from where `bodies` has it, its forearm turning about itself towards
+    how it holds the shaft only as her hand closes on it. Off the shaft her hand continues her forearm as `hand_rest`
+    (a frame) has it."""
+    upper_length, fore_length = (float(np.linalg.norm(nb_limbs[j].joint)) for j in (NB_L_ARM[1], NB_L_ARM[2]))
     out = []
     for i, f in enumerate(held):
         k = tween(keys, i)
@@ -1777,11 +1829,12 @@ def free_left_arm(held, bodies, nb_limbs, keys, hand_rest):
         for limb in NB_L_ARM:
             body[limb + 1] = bodies[i][limb + 1]
         W, P = fk(nb_limbs, f)
-        target = P[NB_L_ARM[0]] + unit(k["dir"]) * float(k["dist"])
-        free = reach(body, nb_limbs, NB_L_ARM, target)
+        up = unit(k["up"])
+        wrist = P[NB_L_ARM[0]] + upper_length * up + fore_length * unit(k["fore"])
+        free = reach(body, nb_limbs, NB_L_ARM, wrist, pole=up)
         free[NB_L_HAND + 1] = hand_rest[NB_L_HAND + 1]
         Wf, _ = fk(nb_limbs, free)
-        g = reach(body, nb_limbs, NB_L_ARM, target * (1 - w) + P[NB_L_HAND] * w)
+        g = reach(body, nb_limbs, NB_L_ARM, wrist * (1 - w) + P[NB_L_HAND] * w, pole=up)
         fore = NB_L_ARM[1]
         q = slerp(quat_from_rot(rot_zyx(g[fore + 1])), quat_from_rot(rot_zyx(f[fore + 1])), w)
         g[fore + 1] = zyx_from_rot(rot_from_quat(q))
@@ -1801,8 +1854,10 @@ def make_lunge(stance, nb_limbs, feet):
         k = tween(keys, i)
         holds.append(dict(spear_hold_from(body, nb_limbs, k["hand"], k["aim"], k["left"]), strict=False))
     held = hold_spear_through(bodies, nb_limbs, holds, "SpearLunge")
-    out = free_left_arm(held, bodies, nb_limbs, [dict(LUNGE_LEFT_ARM[0], at=0)] + LUNGE_LEFT_ARM, stance)
-    return settle_into(out, stance, begin=2)
+    out = settle_into(free_left_arm(held, bodies, nb_limbs, LUNGE_LEFT_ARM, stance), stance, begin=2)
+    for i, f in enumerate(out):  # drawn from where the game has carried the player
+        f[0][2] -= 100.0 * (LUNGE_TRAVEL[i] if i < len(LUNGE_TRAVEL) else 0.0)
+    return out
 
 
 # The sweep is the guard's own, as it was made (the game never plays it): she draws the spear up to her left, steps
@@ -2141,7 +2196,7 @@ def make_spear_set(tables, nb_limbs, feet, spear, relaxed, air, reflections):
     out["Guard"] = (make_spear_guard(T("Guard"), nb_limbs), "blocking with the shaft")
     # attacks
     out["Jab"] = (make_jab(slash, stance, nb_limbs), "a short thrust in both hands")
-    out["Lunge"] = (make_lunge(stance, nb_limbs, feet), "a long thrust, stepping in, her left arm thrown back")
+    out["Lunge"] = (make_lunge(stance, nb_limbs, feet), "a passing lunge, deep, her left arm flung back")
     out["Sweep"] = (make_spear_sweep(T("GuardSlash"), T("GuardSlashRecover")),
                     "the guard's unused sweep and her recovery to attention")
     out["Charge"] = (make_charge(run, slash, stance, nb_limbs), "running in with the spear couched, then a thrust")
