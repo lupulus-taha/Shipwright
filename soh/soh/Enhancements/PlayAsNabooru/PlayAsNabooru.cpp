@@ -214,7 +214,9 @@ const Move kJumpSlashAir = { "JumpSlashAir", GEN(Flip), GEN_SWORDS(Flip), Mode::
 const Move kJumpSlashHit = { "JumpSlashHit", GEN(Slash), GEN_SWORDS(Slash), Mode::Once, 2, 6, 1.0f };
 const Move kJumpSlashEnd = { "JumpSlashEnd", GEN(Jump), GEN_SWORDS(Jump), Mode::Sync, 6, 16 };
 // acrobatics: on flat ground Link touches down from his backflip at 11 of its 14 frames; the fighter's flip touches
-// down at frame 7, crouches (8) and rises (9, 10) while Link plays his landing
+// down at frame 7, crouches (8) and rises (9, 10) while Link plays his landing. Armed, she lands rising into her
+// fighting stance (the fighter's own landing; with the spear, couching it) if she stays in it (see StaysTargeting),
+// else into her idle, her right arm staying low (kBackflipIdle).
 const Move kBackflip = { .name = "Backflip",
                          .anim = GEN(Flip),
                          .swords = GEN_SWORDS(Flip),
@@ -230,6 +232,23 @@ const Move kBackflipEnd = { .name = "BackflipEnd",
                             .start = 7,
                             .end = 10,
                             .bareAnim = GEN(FlipBare) }; // empty-handed she stands up relaxed
+// the same flip landing in her idle: both arms out low, as empty-handed, then her armed idle (with the spear: raising it
+// upright in front of her, to attention)
+const Move kBackflipIdle = { .name = "BackflipIdle",
+                             .anim = GEN(FlipArmed),
+                             .swords = GEN_SWORDS(Flip),
+                             .mode = Mode::Sync,
+                             .start = 0,
+                             .end = 7,
+                             .span = 0.78f,
+                             .bareAnim = GEN(FlipBare) };
+const Move kBackflipEndIdle = { .name = "BackflipEndIdle",
+                                .anim = GEN(FlipArmed),
+                                .swords = GEN_SWORDS(Flip),
+                                .mode = Mode::Sync,
+                                .start = 7,
+                                .end = 10,
+                                .bareAnim = GEN(FlipBare) };
 // jumping and falling (landings are the end of the fighter's drop-from-the-ceiling animation)
 const Move kAirborne = { "Airborne", GEN(Air), nullptr, Mode::Pose, 0 };       // knees drawn up, arms out
 // Running off a ledge Link leaps (13 frames, the last held while he falls on). Hers (generated, frame by frame with
@@ -874,6 +893,13 @@ bool IsTargeting(Player* player) {
     return player->stateFlags1 & (PLAYER_STATE1_PARALLEL | PLAYER_STATE1_HOSTILE_LOCK_ON | PLAYER_STATE1_Z_TARGETING);
 }
 
+// Whether she will still be Z-targeting once she lands from a flip: Link goes on targeting for as long as it lasts,
+// Z held or not; after it, only with Z held or an enemy still targeted.
+bool StaysTargeting(Player* player) {
+    return IsTargeting(player) &&
+           (CHECK_BTN_ALL(gPlayState->state.input[0].cur.button, BTN_Z) || player->focusActor != nullptr);
+}
+
 // her armed version of a move, if she has it
 const Move* Armed(const Move* move) {
     const Move* armed = (move == &kWalk)      ? &kArmedWalk
@@ -1045,9 +1071,9 @@ const Move* WithSpear(const Move* move) {
 bool YieldsToLocomotion(const Move* move) {
     return IsAttack(move) || move == &kGuardSlash || move == &kSpearGuardJab || move == &kSpinEnd ||
            move == &kPlungeEnd || move == &kLandQuick ||
-           move == &kBackflipEnd || move == &kJumpSlashEnd || move == &kLand || move == &kLandShort ||
-           move == &kLandShortStance || move == &kLandDrop || move == &kLandDropStance || move == &kSideHopLandR ||
-           move == &kSideHopLandL;
+           move == &kBackflipEnd || move == &kBackflipEndIdle || move == &kJumpSlashEnd || move == &kLand ||
+           move == &kLandShort || move == &kLandShortStance || move == &kLandDrop || move == &kLandDropStance ||
+           move == &kSideHopLandR || move == &kSideHopLandL;
 }
 
 void UpdateEyes() {
@@ -1237,14 +1263,15 @@ void KeepFeetDown(Player* player) {
 // up; it hits as hard as Link's jump attack. Holding B does not charge a spin attack with the spear (spinning the
 // stick still makes one). Link's jump attack is her plunge (see WithSpear).
 //
-// Pressing B again during an attack goes on to the next one as soon as the blade is through; pressing it while she
-// recovers, or shortly after, does too. Otherwise the combo starts over. The finisher ends the combo: B does nothing
-// until its swing is over, however much it is mashed. As each attack begins she turns, quickly, to the enemy she has
-// targeted, or else the way the stick is held, until the blade is on its way. Link's swing action still hosts each
-// attack (so walls, shields, hit pauses, the lunge of a forward stab, holding B to charge a spin with the scimitars
-// all work as his do), but his animation no longer times it or moves her: hers does, through the VB_PLAYER_*_MELEE_*
-// hooks. She stands her ground as the Gerudo do; their animations shift her weight themselves (her lunge, whose steps
-// go far, carries the player along: see Attack::travel).
+// Pressing B again late in an attack (within kChainBufferFrames of the end of its swing) goes on to the next one as
+// soon as the blade is through; pressing it while she recovers, or shortly after, does too. Otherwise the combo
+// starts over. The finisher ends the combo: B does nothing until its swing is over, however much it is mashed. As each
+// attack begins she turns, quickly, to the enemy she has targeted, or else the way the stick is held, until the blade
+// is on its way. Link's swing action still hosts each attack (so walls, shields, hit pauses, the lunge of a forward
+// stab, holding B to charge a spin with the scimitars all work as his do), but his animation no longer times it or
+// moves her: hers does, through the VB_PLAYER_*_MELEE_* hooks. She stands her ground as the Gerudo do; their
+// animations shift her weight themselves (her lunge, whose steps go far, carries the player along: see
+// Attack::travel).
 struct Attack {
     const Move* move; // Mode::Attack: from its start to the end of her recovery
     f32 swingEnd;     // the frame her swing is over: on with the combo if B was pressed, else she recovers (and can
@@ -1299,6 +1326,9 @@ const Attack kSpearChargeAttack = {
 };
 constexpr u32 kHeavyDamage = 0x04000000; // (the Biggoron's Sword's jump attack)
 constexpr s32 kComboWindow = 12; // frames after a swing during which B goes on with the combo
+// B pressed during a swing is kept for the next attack only from this many frames before the swing is over: a press
+// early in a long swing (the rest of a burst that started the one before) is let go.
+constexpr f32 kChainBufferFrames = 6.0f;
 constexpr s16 kAttackTurnStep = 0x3000; // how fast she turns as an attack begins, a frame
 constexpr f32 kCarryTurnUntil = 2.0f;   // an attack that carries her turns only before it has: her feet stay put
 constexpr f32 kSpeedScale = 1.5f;       // units a frame a player moves per unit of speed
@@ -1493,7 +1523,8 @@ bool Attack_SetWeaponState(Player* player) {
         sAttackFrame += 1.0f;
     }
     sAttackTicked = true;
-    if (CHECK_BTN_ALL(gPlayState->state.input[0].press.button, BTN_B) && !IsFinisher()) {
+    if (CHECK_BTN_ALL(gPlayState->state.input[0].press.button, BTN_B) && !IsFinisher() &&
+        sAttackFrame >= sAttack->swingEnd - kChainBufferFrames) {
         sChainBuffered = true;
     }
     // Holding B since the attack began charges a spin attack once Link's 8-frame count runs down: hers may take
@@ -1695,8 +1726,9 @@ void Nabooru_OnPlayerUpdate() {
     if (YieldsToLocomotion(body) && sLinkStalledFrames >= 2 && moving) {
         body = nullptr;
     }
-    if (body == &kAirborne && (sBody.move == &kBackflip || sBody.move == &kJumpSlashAir || sBody.move == &kPlungeAir ||
-                               sBody.move == &kLeapAir || sBody.move == &kSideHopR || sBody.move == &kSideHopL)) {
+    if (body == &kAirborne && (sBody.move == &kBackflip || sBody.move == &kBackflipIdle || sBody.move == &kJumpSlashAir ||
+                               sBody.move == &kPlungeAir || sBody.move == &kLeapAir || sBody.move == &kSideHopR ||
+                               sBody.move == &kSideHopL)) {
         // Link briefly plays his fall between a flip and its landing (or a side hop and its landing, when the ground
         // falls away): finish the flip, hold the hop's last frame in the air instead
         body = sBody.move;
@@ -1725,6 +1757,9 @@ void Nabooru_OnPlayerUpdate() {
     if (body == &kLandDrop && sShowSwords && IsTargeting(player) && HasResource(kLandDropStance.anim) &&
         HasResource(kStance.anim)) {
         body = &kLandDropStance;
+    }
+    if ((body == &kBackflip || body == &kBackflipEnd) && !StaysTargeting(player) && HasResource(kBackflipIdle.anim)) {
+        body = (body == &kBackflip) ? &kBackflipIdle : &kBackflipEndIdle; // (her idle follows, not her stance)
     }
 
     // Landing after a long drop while moving on (Link rolls): a quick dip into her walk/run. (After shorter drops she

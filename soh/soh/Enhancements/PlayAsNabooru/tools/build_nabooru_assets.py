@@ -1034,6 +1034,12 @@ def make_bare_flip(flip, crouch, rest, nb_limbs, reflections):
     return out
 
 
+def make_armed_flip(flip, crouch, rest, nb_limbs, reflections, clearance):
+    """The fighter's backflip with her scimitars for when her idle follows (her stance follows the fighter's own):
+    landing as empty-handed, both arms out low, rising towards her armed idle `rest`, the blades kept clear of her."""
+    return keep_blades_clear(make_bare_flip(flip, crouch, rest, nb_limbs, reflections), nb_limbs, clearance)
+
+
 BONK_FALL = (7, 19)  # the fighter's defeat: falling back onto her backside (7-10), bouncing and settling (10-19)
 BONK_KNEEL = (10, 3)  # the spear guard's kneel, played backwards (before 3 she lifts a foot to step back)
 
@@ -2080,6 +2086,77 @@ def regrip(frames, nb_limbs, weights, what="spear"):
     return out
 
 
+# Her backflip: the fighter's flight, the spear carried (see keep_spear_clear). From its touchdown (FLIP_TOUCH) her
+# right hand keeps the spear low instead of raising it for the fighter's stance. Into her stance (Z held): the
+# fighter's own landing, the spear brought from her side to couched (by way of SPEAR_FLIP_COUCH_AIM), her left hand
+# onto it (SPEAR_FLIP_REGRIP: how far, frame by frame from the touchdown). Into her idle: the empty-handed landing, the
+# spear raised upright in front of her to attention; SPEAR_FLIP_RAISE, frame by frame after the touchdown: the way its
+# blade points (yaw, elevation; None: as at attention; before that no steeper than 70 degrees, as near vertical
+# grip_ways measures the hand's turn round the shaft from another reference), how far her hand has come from where it
+# touched down to where it holds the spear at attention, and how much further out to her right it is (model x) while
+# the end of the shaft passes her leg.
+FLIP_TOUCH = 6
+SPEAR_FLIP_COUCH_AIM = (5, 2)
+SPEAR_FLIP_REGRIP = (0.0, 0.15, 0.5, 0.85, 1.0)
+SPEAR_FLIP_RAISE = [((8, 10), 0.2, -120), ((12, 36), 0.45, -250), ((60, 70), 0.75, -150), (None, 0.92, 0)]
+
+
+def land_holding(bodies, holds, first, nb_limbs):
+    """`bodies` (from a touchdown on) with her right hand on the spear as `holds` say (grip, toward), the first frame
+    exactly `first`, the touchdown as the flight has it: her hand goes on round the shaft the way it is there."""
+    bodies = np.array(bodies).copy()
+    for f in bodies:  # (started alike: see arms_from)
+        for limb in NB_R_ARM:
+            f[limb + 1] = first[limb + 1]
+    there = fk(nb_limbs, first)[0][NB_R_HAND]
+    options = [grip_ways(b, nb_limbs, NB_R_ARM, h["grip"], h["toward"]) for b, h in zip(bodies, holds)]
+    options[0] = [max(options[0], key=lambda w: np.trace(w[2].T @ there))]
+    out, twist = [], None
+    for i, k in enumerate(steady_ways(options, list(range(len(bodies))))):
+        f, twist = close_hand(options[i][k][1], nb_limbs, NB_R_ARM, options[i][k][2], twist)
+        out.append(f)
+    # Her forearm takes its share of the hand's turn otherwise than in the flight: at the touchdown it is turned about
+    # itself as it is there, the difference taken up over the landing (her hands as they are).
+    upper, fore, hand = NB_R_ARM
+    M = fk(nb_limbs, out[0])[0][fore].T @ fk(nb_limbs, first)[0][fore]
+    roll = math.degrees(math.atan2(M[2, 1], M[1, 1]))
+    for i, f in enumerate(out):
+        held = fk(nb_limbs, f)[0][hand]
+        f[fore + 1] = zyx_from_rot(rot_zyx(f[fore + 1]) @ turn_matrix(X_AXIS, roll * (1 - smoothstep(i / (len(out) - 1)))))
+        set_world(f, nb_limbs, hand, held)
+    out[0] = first.copy()
+    return np.array(out)
+
+
+def make_spear_flips(flip, jump, stance, attention, nb_limbs, spear, reflections):
+    """-> her backflip with the spear landing into her stance, and the same landing into her idle (see FLIP_TOUCH)."""
+    carried = keep_spear_clear(flip, nb_limbs, spear, "SpearFlip")
+    first = carried[FLIP_TOUCH]
+    touch, st, at = (spear_hold(f, nb_limbs) for f in (first, stance, attention))
+
+    def holds(bodies, hands, aims):
+        out = []
+        for body, hand, aim in zip(bodies, hands, aims):
+            _, P = fk(nb_limbs, body)
+            out.append(dict(grip=P[NB_R_ARM[0]] + np.asarray(hand, float), toward=direction(*aim)))
+        return out
+
+    keys = [dict(at=0, hand=touch["hand"], aim=touch["aim"]),
+            dict(at=2, hand=(np.array(touch["hand"]) + np.array(st["hand"])) / 2, aim=SPEAR_FLIP_COUCH_AIM),
+            dict(at=4, hand=st["hand"], aim=st["aim"])]
+    bodies = flip[FLIP_TOUCH:]
+    k = [tween(keys, i) for i in range(len(bodies))]
+    couched_ = land_holding(bodies, holds(bodies, [x["hand"] for x in k], [x["aim"] for x in k]), first, nb_limbs)
+    couched_ = settle_into(regrip(couched_, nb_limbs, SPEAR_FLIP_REGRIP, "SpearFlip"), stance, n=2)
+    couched_[0] = first
+
+    bodies = make_bare_flip(flip, make_soft_landing(jump, attention)[5], attention, nb_limbs, reflections)[FLIP_TOUCH:]
+    raise_ = [(touch["aim"], 0.0, 0)] + [(at["aim"] if aim is None else aim, w, x) for aim, w, x in SPEAR_FLIP_RAISE]
+    hands = [np.array(touch["hand"]) * (1 - w) + np.array(at["hand"]) * w + np.array([x, 0.0, 0.0]) for _, w, x in raise_]
+    upright = land_holding(bodies, holds(bodies, hands, [aim for aim, _, _ in raise_]), first, nb_limbs)
+    return np.concatenate([carried[:FLIP_TOUCH], couched_]), np.concatenate([carried[:FLIP_TOUCH], upright])
+
+
 # In the air she carries it in her right hand at her side, pointing ahead and up.
 SPEAR_AIR = dict(hand=(-600, -1300, 300), aim=(8, 25))
 # Hurt by a long fall she squats holding on to it, its butt on the ground in front of her (see HURT_LAND): where her
@@ -2205,7 +2282,9 @@ def make_spear_set(tables, nb_limbs, feet, spear, relaxed, air, reflections):
     out["Leap"] = (make_spear_leap(stance, plunge, nb_limbs, feet), "Z+A: crouching, leaping into the plunge")
     carried("SpinAttack", T("SpinAttack"), "the fighter's leaping spin, the spear swung round her")
     # acrobatics and falls, the spear carried
-    carried("Flip", T("Flip"), "the fighter's backflip")
+    flip_stance, flip_idle = make_spear_flips(T("Flip"), jump, stance, attention, nb_limbs, spear, reflections)
+    out["Flip"] = (flip_stance, "the fighter's backflip, landing into her stance, the spear couched")
+    out["FlipArmed"] = (flip_idle, "the same, landing into her idle, the spear raised to attention")
     carried("Jump", jump, "the fighter's landing")
     out["Air"] = (np.array([with_spear(air, nb_limbs, what="SpearAir", **SPEAR_AIR)]), "in the air")
     out["RunJumpArmed"] = (make_spear_run_jump(run, nb_limbs, air), "leaping off a ledge, spear couched")
@@ -2517,6 +2596,8 @@ def main():
     add("KnockFrontArmed", knock_armed, "the same with scimitars in hand, blades clear of her and the ground")
     add("FlipBare", make_bare_flip(tables["gPlayAsNabooruFlipAnim"], soft[5], relaxed[0], nb_limbs, reflections),
         "backflip landing relaxed, for empty hands")
+    armed["FlipArmed"] = make_armed_flip(tables["gPlayAsNabooruFlipAnim"], make_soft_landing(jump, armed_idle[0])[5],
+                                         armed_idle[0], nb_limbs, reflections, clearance)
     for name, table in armed.items():
         clipping = sum(clearance.count(f) for f in table)
         if clipping:
